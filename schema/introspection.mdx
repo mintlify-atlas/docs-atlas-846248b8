@@ -1,0 +1,346 @@
+---
+title: Database Introspection
+description: Inspect database metadata including tables, columns, and schemas at runtime
+---
+
+Kysely's `DatabaseIntrospector` provides runtime access to database metadata. This is useful for building dynamic queries, generating documentation, or implementing database management tools.
+
+## Accessing the Introspector
+
+The introspector is available on the Kysely instance:
+
+```typescript
+const introspector = db.introspection
+```
+
+## Getting Schemas
+
+Retrieve all schemas in the database (PostgreSQL, MSSQL):
+
+```typescript
+const schemas = await db.introspection.getSchemas()
+
+schemas.forEach((schema) => {
+  console.log(schema.name)
+})
+```
+
+**Example output:**
+```typescript
+[
+  { name: 'public' },
+  { name: 'auth' },
+  { name: 'app' }
+]
+```
+
+## Getting Tables
+
+Retrieve metadata for all tables and views:
+
+```typescript
+const tables = await db.introspection.getTables()
+
+tables.forEach((table) => {
+  console.log(`${table.name} (${table.isView ? 'view' : 'table'})`)
+  
+  table.columns.forEach((column) => {
+    console.log(`  - ${column.name}: ${column.dataType}`)
+  })
+})
+```
+
+### Including Internal Tables
+
+By default, Kysely's internal migration tables are excluded. To include them:
+
+```typescript
+const tables = await db.introspection.getTables({
+  withInternalKyselyTables: true
+})
+```
+
+## Table Metadata
+
+Each table object contains:
+
+```typescript
+interface TableMetadata {
+  name: string          // Table name
+  isView: boolean       // true for views, false for tables
+  schema?: string       // Schema name (PostgreSQL, MSSQL)
+  columns: ColumnMetadata[]
+}
+```
+
+**Example:**
+
+```typescript
+const tables = await db.introspection.getTables()
+const personTable = tables.find(t => t.name === 'person')
+
+if (personTable) {
+  console.log(`Table: ${personTable.name}`)
+  console.log(`Schema: ${personTable.schema ?? 'default'}`)
+  console.log(`Is View: ${personTable.isView}`)
+  console.log(`Columns: ${personTable.columns.length}`)
+}
+```
+
+## Column Metadata
+
+Each column object provides detailed information:
+
+```typescript
+interface ColumnMetadata {
+  name: string              // Column name
+  dataType: string          // Database-specific data type
+  dataTypeSchema?: string   // Schema where the data type is defined
+  isAutoIncrementing: boolean
+  isNullable: boolean
+  hasDefaultValue: boolean
+  comment?: string          // Column comment if available
+}
+```
+
+### Data Type Variations
+
+<Warning>
+The `dataType` field returns the **database's native type name**, which varies across dialects even for the same migration.
+</Warning>
+
+**Example:** An `integer` column definition produces:
+- PostgreSQL: `int4`
+- MySQL: `int`
+- SQLite: `INTEGER`
+
+```typescript
+const tables = await db.introspection.getTables()
+const personTable = tables.find(t => t.name === 'person')
+const idColumn = personTable?.columns.find(c => c.name === 'id')
+
+if (idColumn) {
+  console.log(`Type: ${idColumn.dataType}`)  // e.g., "int4" on PostgreSQL
+  console.log(`Nullable: ${idColumn.isNullable}`)
+  console.log(`Auto-increment: ${idColumn.isAutoIncrementing}`)
+  console.log(`Has default: ${idColumn.hasDefaultValue}`)
+}
+```
+
+## Practical Examples
+
+### Generating Table Documentation
+
+```typescript
+async function generateDatabaseDocs(db: Kysely<any>) {
+  const tables = await db.introspection.getTables()
+  
+  for (const table of tables) {
+    if (table.isView) continue
+    
+    console.log(`\n## ${table.name}`)
+    if (table.schema) {
+      console.log(`Schema: ${table.schema}`)
+    }
+    
+    console.log('\nColumns:')
+    table.columns.forEach((col) => {
+      const nullable = col.isNullable ? 'NULL' : 'NOT NULL'
+      const autoInc = col.isAutoIncrementing ? ' AUTO_INCREMENT' : ''
+      const defaultVal = col.hasDefaultValue ? ' DEFAULT' : ''
+      
+      console.log(
+        `- ${col.name}: ${col.dataType} ${nullable}${autoInc}${defaultVal}`
+      )
+      
+      if (col.comment) {
+        console.log(`  ${col.comment}`)
+      }
+    })
+  }
+}
+
+await generateDatabaseDocs(db)
+```
+
+### Validating Expected Schema
+
+```typescript
+async function validateSchema(db: Kysely<any>) {
+  const tables = await db.introspection.getTables()
+  
+  const requiredTables = ['person', 'post', 'comment']
+  const missingTables = requiredTables.filter(
+    name => !tables.find(t => t.name === name)
+  )
+  
+  if (missingTables.length > 0) {
+    throw new Error(`Missing tables: ${missingTables.join(', ')}`)
+  }
+  
+  // Validate person table structure
+  const personTable = tables.find(t => t.name === 'person')
+  const requiredColumns = ['id', 'email', 'created_at']
+  
+  const missingColumns = requiredColumns.filter(
+    name => !personTable?.columns.find(c => c.name === name)
+  )
+  
+  if (missingColumns.length > 0) {
+    throw new Error(
+      `person table missing columns: ${missingColumns.join(', ')}`
+    )
+  }
+  
+  console.log('✓ Schema validation passed')
+}
+
+await validateSchema(db)
+```
+
+### Finding Tables by Pattern
+
+```typescript
+async function findTablesByPattern(
+  db: Kysely<any>,
+  pattern: RegExp
+): Promise<TableMetadata[]> {
+  const tables = await db.introspection.getTables()
+  return tables.filter(table => pattern.test(table.name))
+}
+
+// Find all audit tables
+const auditTables = await findTablesByPattern(db, /_audit$/)
+auditTables.forEach(t => console.log(t.name))
+```
+
+### Detecting Schema Changes
+
+```typescript
+interface SchemaSnapshot {
+  tables: Record<string, string[]>  // table name -> column names
+}
+
+async function captureSchemaSnapshot(db: Kysely<any>): Promise<SchemaSnapshot> {
+  const tables = await db.introspection.getTables()
+  
+  return {
+    tables: Object.fromEntries(
+      tables.map(t => [
+        t.name,
+        t.columns.map(c => c.name)
+      ])
+    )
+  }
+}
+
+async function compareSchemas(
+  db: Kysely<any>,
+  oldSnapshot: SchemaSnapshot
+) {
+  const newSnapshot = await captureSchemaSnapshot(db)
+  
+  // Find new tables
+  const newTables = Object.keys(newSnapshot.tables).filter(
+    name => !oldSnapshot.tables[name]
+  )
+  
+  // Find dropped tables
+  const droppedTables = Object.keys(oldSnapshot.tables).filter(
+    name => !newSnapshot.tables[name]
+  )
+  
+  // Find modified tables
+  const commonTables = Object.keys(newSnapshot.tables).filter(
+    name => oldSnapshot.tables[name]
+  )
+  
+  for (const tableName of commonTables) {
+    const oldCols = oldSnapshot.tables[tableName]
+    const newCols = newSnapshot.tables[tableName]
+    
+    const addedCols = newCols.filter(c => !oldCols.includes(c))
+    const droppedCols = oldCols.filter(c => !newCols.includes(c))
+    
+    if (addedCols.length > 0 || droppedCols.length > 0) {
+      console.log(`${tableName}:`)
+      if (addedCols.length) console.log(`  + ${addedCols.join(', ')}`)
+      if (droppedCols.length) console.log(`  - ${droppedCols.join(', ')}`)
+    }
+  }
+  
+  if (newTables.length) console.log(`New tables: ${newTables.join(', ')}`)
+  if (droppedTables.length) console.log(`Dropped: ${droppedTables.join(', ')}`)
+}
+```
+
+### Building a Dynamic Query Builder
+
+```typescript
+async function buildSelectAllQuery(
+  db: Kysely<any>,
+  tableName: string
+) {
+  const tables = await db.introspection.getTables()
+  const table = tables.find(t => t.name === tableName)
+  
+  if (!table) {
+    throw new Error(`Table ${tableName} not found`)
+  }
+  
+  // Only select non-binary columns
+  const columns = table.columns
+    .filter(c => !c.dataType.includes('blob') && !c.dataType.includes('bytea'))
+    .map(c => c.name)
+  
+  return db
+    .selectFrom(tableName as any)
+    .select(columns as any)
+}
+
+const query = await buildSelectAllQuery(db, 'person')
+const results = await query.execute()
+```
+
+## Legacy Method
+
+<Warning>
+The `getMetadata()` method is deprecated. Use `getTables()` instead.
+</Warning>
+
+```typescript
+// Deprecated
+const metadata = await db.introspection.getMetadata()
+const tables = metadata.tables
+
+// Use this instead
+const tables = await db.introspection.getTables()
+```
+
+## Use Cases
+
+1. **Database Documentation** - Auto-generate schema documentation
+2. **Schema Validation** - Verify database structure in tests
+3. **Migration Safety** - Check schema before applying migrations
+4. **Dynamic UIs** - Build admin interfaces that adapt to schema changes
+5. **Code Generation** - Generate TypeScript types from database schema
+6. **Monitoring** - Track schema changes over time
+7. **Multi-tenancy** - Introspect tenant-specific schemas
+
+## Performance Considerations
+
+- Introspection queries can be slow on large databases
+- Cache results when possible instead of repeatedly calling introspection methods
+- Filter results early if you only need specific tables
+
+```typescript
+// Cache introspection results
+let cachedTables: TableMetadata[] | null = null
+
+async function getCachedTables(db: Kysely<any>) {
+  if (!cachedTables) {
+    cachedTables = await db.introspection.getTables()
+  }
+  return cachedTables
+}
+```

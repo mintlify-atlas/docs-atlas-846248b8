@@ -1,0 +1,294 @@
+---
+title: Delete Queries
+description: Learn how to delete data from your database using Kysely's DeleteQueryBuilder with type-safe delete statements.
+---
+
+The `DeleteQueryBuilder` is used to build and execute DELETE queries in Kysely. It provides a fluent API for deleting rows with type safety.
+
+## Basic Usage
+
+### Delete Rows
+
+Delete rows from a table:
+
+```typescript
+const result = await db
+  .deleteFrom('person')
+  .where('id', '=', 1)
+  .executeTakeFirst()
+
+console.log(result.numDeletedRows)
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+delete from "person" where "id" = $1
+```
+
+### Delete with Multiple Conditions
+
+```typescript
+await db
+  .deleteFrom('person')
+  .where('first_name', '=', 'Jennifer')
+  .where('age', '>', 40)
+  .execute()
+```
+
+## Returning Data
+
+On PostgreSQL and SQLite, you can use `returning` to get deleted rows:
+
+```typescript
+const deletedPerson = await db
+  .deleteFrom('person')
+  .where('id', '=', 1)
+  .returning(['id', 'first_name'])
+  .executeTakeFirst()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+delete from "person" where "id" = $1 returning "id", "first_name"
+```
+
+Return all columns:
+
+```typescript
+const deletedPerson = await db
+  .deleteFrom('person')
+  .where('id', '=', 1)
+  .returningAll()
+  .executeTakeFirst()
+```
+
+## Using Clause (PostgreSQL, MySQL)
+
+### PostgreSQL: Using for Additional Tables
+
+The `using` clause allows adding additional tables for filtering:
+
+```typescript
+await db
+  .deleteFrom('pet')
+  .using('person')
+  .whereRef('pet.owner_id', '=', 'person.id')
+  .where('person.first_name', '=', 'Bob')
+  .executeTakeFirstOrThrow()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+delete from "pet"
+using "person"
+where "pet"."owner_id" = "person"."id"
+  and "person"."first_name" = $1
+```
+
+### MySQL: Using with Joins
+
+On MySQL, the `using` clause allows using joins:
+
+```typescript
+await db
+  .deleteFrom('pet')
+  .using('pet')
+  .leftJoin('person', 'person.id', 'pet.owner_id')
+  .where('person.first_name', '=', 'Bob')
+  .executeTakeFirstOrThrow()
+```
+
+The generated SQL (MySQL):
+
+```sql
+delete from `pet`
+using `pet`
+left join `person` on `person`.`id` = `pet`.`owner_id`
+where `person`.`first_name` = ?
+```
+
+### Multiple Tables in Using
+
+```typescript
+await db
+  .deleteFrom('toy')
+  .using(['pet', 'person'])
+  .whereRef('toy.pet_id', '=', 'pet.id')
+  .whereRef('pet.owner_id', '=', 'person.id')
+  .where('person.first_name', '=', 'Bob')
+  .returning('pet.name')
+  .executeTakeFirstOrThrow()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+delete from "toy"
+using "pet", "person"
+where "toy"."pet_id" = "pet"."id"
+  and "pet"."owner_id" = "person"."id"
+  and "person"."first_name" = $1
+returning "pet"."name"
+```
+
+## Delete with Joins
+
+You can join tables to delete based on related data:
+
+```typescript
+await db
+  .deleteFrom('person')
+  .using('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  .where('pet.name', '=', 'Doggo')
+  .execute()
+```
+
+See the [joins documentation](/operations/joins) for more information on join methods.
+
+## Limit and Order By
+
+### Limit (MySQL)
+
+Limit the number of deleted rows on MySQL:
+
+```typescript
+await db
+  .deleteFrom('person')
+  .where('age', '>', 18)
+  .limit(5)
+  .execute()
+```
+
+### Order By (MySQL)
+
+```typescript
+await db
+  .deleteFrom('person')
+  .orderBy('age', 'desc')
+  .limit(1)
+  .execute()
+```
+
+## Top Clause (MS SQL Server)
+
+Delete the first N rows:
+
+```typescript
+await db
+  .deleteFrom('person')
+  .top(5)
+  .where('age', '>', 18)
+  .executeTakeFirstOrThrow()
+```
+
+The generated SQL (MS SQL Server):
+
+```sql
+delete top(5) from "person" where "age" > @1
+```
+
+Delete a percentage of rows:
+
+```typescript
+await db
+  .deleteFrom('person')
+  .top(50, 'percent')
+  .where('age', '>', 18)
+  .executeTakeFirstOrThrow()
+```
+
+The generated SQL (MS SQL Server):
+
+```sql
+delete top(50) percent from "person" where "age" > @1
+```
+
+## Where Conditions
+
+All the standard where methods are available:
+
+```typescript
+// Simple where
+await db
+  .deleteFrom('person')
+  .where('id', '=', 1)
+  .execute()
+
+// Multiple conditions
+await db
+  .deleteFrom('person')
+  .where('first_name', '=', 'Jennifer')
+  .where('age', '>', 40)
+  .execute()
+
+// Where with expression
+await db
+  .deleteFrom('person')
+  .where((eb) => eb.or([
+    eb('first_name', '=', 'Jennifer'),
+    eb('first_name', '=', 'Arnold')
+  ]))
+  .execute()
+
+// Where ref (comparing columns)
+await db
+  .deleteFrom('person')
+  .whereRef('first_name', '=', 'last_name')
+  .execute()
+```
+
+See the [DeleteQueryBuilder](/api/delete-query-builder) documentation for more filtering options.
+
+## Clear Methods
+
+Clear parts of the query:
+
+```typescript
+const query = db
+  .deleteFrom('person')
+  .where('id', '=', 1)
+
+// Clear where conditions
+const clearedQuery = query.clearWhere()
+
+// Clear order by
+const clearedOrderQuery = query.clearOrderBy()
+```
+
+## API Reference
+
+### Main Methods
+
+- `deleteFrom(table)` - Specify the table to delete from
+- `where(...)` - Add WHERE conditions
+- `whereRef(...)` - Add WHERE conditions comparing columns
+- `using(table)` - Add USING clause for additional tables
+- `innerJoin()`, `leftJoin()`, `rightJoin()`, `fullJoin()` - Join tables
+- `orderBy(...)` - Order rows before deletion (MySQL)
+- `limit(n)` - Limit number of deleted rows (MySQL)
+- `top(n)` - Delete top N rows (MS SQL Server)
+- `returning(...)` - Return columns from deleted rows
+- `returningAll()` - Return all columns from deleted rows
+- `clearWhere()` - Clear WHERE conditions
+- `clearOrderBy()` - Clear ORDER BY clause
+- `modifyEnd(modifier)` - Add custom SQL
+- `execute()` - Execute the query
+- `executeTakeFirst()` - Execute and return first result
+- `executeTakeFirstOrThrow()` - Execute and return first result or throw
+
+### Result Object
+
+The return value is an instance of `DeleteResult`:
+
+```typescript
+interface DeleteResult {
+  /**
+   * The number of rows deleted
+   */
+  numDeletedRows?: bigint | undefined
+}
+```

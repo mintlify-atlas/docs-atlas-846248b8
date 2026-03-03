@@ -1,0 +1,339 @@
+---
+title: JSONPathBuilder
+description: Type-safe builder for traversing JSON columns and creating JSON path expressions
+---
+
+# JSONPathBuilder
+
+`JSONPathBuilder` provides a type-safe way to traverse JSON structures and build JSON path expressions. It's created by calling `eb.ref(column, '->$')` or `eb.jsonPath<'column'>()` on an `ExpressionBuilder`.
+
+## Type Parameters
+
+<ParamField path="S" type="any" required>
+  The source type (root JSON type)
+</ParamField>
+
+<ParamField path="O" type="any" default="S">
+  The current output type at this point in the traversal
+</ParamField>
+
+## Methods
+
+### at
+
+Access an element of a JSON array in a specific location.
+
+```typescript
+at<I extends number | 'last' | `#-${number}`>(
+  index: I,
+): TraversedJSONPathBuilder<S, O2>
+```
+
+<ParamField path="index" type="number | 'last' | '#-{number}'" required>
+  Array index, `last` for MySQL, or `#-N` for SQLite (e.g., `#-1` for last element)
+</ParamField>
+
+Since there's no guarantee an element exists in the given array location, the resulting type is always nullable. If you're sure the element exists, you should use `$assertType` to narrow the type safely.
+
+See also `key` to access properties of JSON objects.
+
+**Example:**
+
+```typescript
+await db.selectFrom('person')
+  .select(eb =>
+    eb.ref('nicknames', '->').at(0).as('primary_nickname')
+  )
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select "nicknames"->0 as "primary_nickname" from "person"
+```
+
+**Combined with `key`:**
+
+```typescript
+db.selectFrom('person').select(eb =>
+  eb.ref('experience', '->').at(0).key('role').as('first_role')
+)
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select "experience"->0->'role' as "first_role" from "person"
+```
+
+**MySQL with 'last':**
+
+```typescript
+db.selectFrom('person').select(eb =>
+  eb.ref('nicknames', '->$').at('last').as('last_nickname')
+)
+```
+
+The generated SQL (MySQL):
+
+```sql
+select `nicknames`->'$[last]' as `last_nickname` from `person`
+```
+
+**SQLite with '#-1':**
+
+```typescript
+db.selectFrom('person').select(eb =>
+  eb.ref('nicknames', '->>$').at('#-1').as('last_nickname')
+)
+```
+
+The generated SQL (SQLite):
+
+```sql
+select "nicknames"->>'$[#-1]' as `last_nickname` from `person`
+```
+
+### key
+
+Access a property of a JSON object.
+
+```typescript
+key<K extends keyof NonNullable<O> & string>(
+  key: K,
+): TraversedJSONPathBuilder<S, O2>
+```
+
+<ParamField path="key" type="string" required>
+  Object property key
+</ParamField>
+
+If a field is optional, the resulting type will be nullable.
+
+See also `at` to access elements of JSON arrays.
+
+**Example:**
+
+```typescript
+db.selectFrom('person').select(eb =>
+  eb.ref('address', '->').key('city').as('city')
+)
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select "address"->'city' as "city" from "person"
+```
+
+**Going deeper:**
+
+```typescript
+db.selectFrom('person').select(eb =>
+  eb.ref('profile', '->$').key('website').key('url').as('website_url')
+)
+```
+
+The generated SQL (MySQL):
+
+```sql
+select `profile`->'$.website.url' as `website_url` from `person`
+```
+
+**Combined with `at`:**
+
+```typescript
+db.selectFrom('person').select(eb =>
+  eb.ref('profile', '->').key('addresses').at(0).key('city').as('city')
+)
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select "profile"->'addresses'->0->'city' as "city" from "person"
+```
+
+## TraversedJSONPathBuilder
+
+Returned by `at()` and `key()` calls. Extends `JSONPathBuilder` with additional methods for aliasing and type casting.
+
+### as
+
+Returns an aliased version of the expression.
+
+```typescript
+as<A extends string>(alias: A): AliasedExpression<O, A>
+as<A extends string>(alias: Expression<unknown>): AliasedExpression<O, A>
+```
+
+<ParamField path="alias" type="string | Expression" required>
+  The alias name for the expression
+</ParamField>
+
+In addition to slapping `as "the_alias"` to the end of the SQL, this method also provides strict typing.
+
+**Example:**
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .select(eb =>
+    eb.ref('address', '->').key('city').as('city')
+  )
+  .executeTakeFirstOrThrow()
+
+// `city` field exists in the result type.
+console.log(result.city)
+```
+
+### $castTo
+
+Change the output type of the json path.
+
+```typescript
+$castTo<O2>(): TraversedJSONPathBuilder<S, O2>
+```
+
+<ParamField path="O2" type="type parameter" required>
+  The new output type
+</ParamField>
+
+This method call doesn't change the SQL in any way. This methods simply returns a copy of this `JSONPathBuilder` with a new output type.
+
+**Example:**
+
+```typescript
+interface Address {
+  street: string
+  city: string
+  zipCode: string
+}
+
+const result = await db
+  .selectFrom('person')
+  .select(eb =>
+    eb.ref('data', '->').key('address').$castTo<Address>().as('address')
+  )
+  .execute()
+```
+
+### $notNull
+
+Omit null from the expression's type.
+
+```typescript
+$notNull(): TraversedJSONPathBuilder<S, Exclude<O, null>>
+```
+
+This function can be useful in cases where you know an expression can't be null, but Kysely is unable to infer it.
+
+This method call doesn't change the SQL in any way. This methods simply returns a copy of `this` with a new output type.
+
+### toOperationNode
+
+Converts the builder to an operation node for internal use.
+
+```typescript
+toOperationNode(): OperationNode
+```
+
+## AliasedJSONPathBuilder
+
+Returned by `as()` calls. Represents a JSON path expression with an alias.
+
+```typescript
+class AliasedJSONPathBuilder<O, A extends string>
+```
+
+<ParamField path="O" type="any" required>
+  The output type
+</ParamField>
+
+<ParamField path="A" type="string" required>
+  The alias name
+</ParamField>
+
+## Usage Patterns
+
+### JSON Reference (PostgreSQL/SQLite)
+
+Use `->` operator for JSON references that chain operators:
+
+```typescript
+// PostgreSQL
+eb.ref('data', '->').key('user').key('name')
+// Generates: "data"->'user'->'name'
+
+eb.ref('items', '->').at(0).key('price')
+// Generates: "items"->0->'price'
+```
+
+### JSON Path (MySQL)
+
+Use `->$` operator for JSON path expressions:
+
+```typescript
+// MySQL
+eb.ref('data', '->$').key('user').key('name')
+// Generates: `data`->'$.user.name'
+
+eb.ref('items', '->$').at(0).key('price')
+// Generates: `items`->'$[0].price'
+```
+
+### JSON Path Expression
+
+Use `jsonPath()` for creating path expressions to use in functions:
+
+```typescript
+await db.updateTable('person')
+  .set('profile', (eb) => eb.fn('json_set', [
+    'profile',
+    eb.jsonPath<'profile'>().key('addresses').at('last').key('city'),
+    eb.val('San Diego')
+  ]))
+  .where('id', '=', 3)
+  .execute()
+```
+
+The generated SQL (MySQL):
+
+```sql
+update `person`
+set `profile` = json_set(`profile`, '$.addresses[last].city', $1)
+where `id` = $2
+```
+
+## Type Safety
+
+The `JSONPathBuilder` maintains full type safety when traversing JSON structures:
+
+```typescript
+interface Database {
+  person: {
+    id: number
+    profile: {
+      name: string
+      addresses: Array<{
+        street: string
+        city: string
+        zipCode: string
+      }>
+    }
+  }
+}
+
+// Type: string | null
+const city = eb.ref('profile', '->').key('addresses').at(0).key('city')
+
+// Type: string (if you're certain it exists)
+const cityNotNull = eb.ref('profile', '->').key('addresses').at(0).key('city').$notNull()
+```
+
+The builder infers:
+- Object property types from the schema
+- Array element types
+- Nullability based on optional fields and array access
+- Proper return types at each traversal step

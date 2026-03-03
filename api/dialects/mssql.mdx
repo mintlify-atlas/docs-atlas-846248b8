@@ -1,0 +1,416 @@
+---
+title: 'MssqlDialect'
+description: 'MS SQL Server dialect using the tedious library'
+---
+
+## Overview
+
+MS SQL Server dialect that uses the [tedious](https://tediousjs.github.io/tedious) library for database communication and [tarn.js](https://github.com/vincit/tarn.js) for connection pooling.
+
+**Source:** `src/dialect/mssql/mssql-dialect.ts:52`
+
+## Installation
+
+Install the required peer dependencies:
+
+```bash
+npm install tedious
+npm install tarn
+npm install --save-dev @types/tedious
+```
+
+## Basic Usage
+
+```typescript
+import { Kysely, MssqlDialect } from 'kysely'
+import * as Tedious from 'tedious'
+import * as Tarn from 'tarn'
+
+const db = new Kysely<Database>({
+  dialect: new MssqlDialect({
+    tarn: {
+      ...Tarn,
+      options: {
+        min: 0,
+        max: 10,
+      },
+    },
+    tedious: {
+      ...Tedious,
+      connectionFactory: () => new Tedious.Connection({
+        authentication: {
+          type: 'default',
+          options: {
+            userName: 'username',
+            password: 'password',
+          },
+        },
+        server: 'localhost',
+        options: {
+          database: 'some_db',
+          port: 1433,
+          trustServerCertificate: true,
+        },
+      }),
+    },
+  })
+})
+```
+
+## Configuration
+
+### MssqlDialectConfig
+
+**Source:** `src/dialect/mssql/mssql-dialect-config.ts:3`
+
+<ParamField path="tedious" type="Tedious" required>
+  The `tedious` package configuration including the connection factory.
+  
+  You need to pass the `tedious` package itself along with a factory function that creates new Connection instances.
+
+  ```typescript
+  import * as Tedious from 'tedious'
+
+  {
+    tedious: {
+      ...Tedious,
+      connectionFactory: () => new Tedious.Connection({
+        server: 'localhost',
+        // ... connection config
+      })
+    }
+  }
+  ```
+</ParamField>
+
+<ParamField path="tarn" type="Tarn" required>
+  The `tarn` package configuration for connection pooling.
+  
+  You need to pass the `tarn` package itself along with pool options (excluding `create`, `destroy`, and `validate` functions which are controlled by this dialect).
+
+  At minimum, you must specify `min` and `max` connection counts.
+
+  ```typescript
+  import * as Tarn from 'tarn'
+
+  {
+    tarn: {
+      ...Tarn,
+      options: {
+        min: 0,
+        max: 10,
+      }
+    }
+  }
+  ```
+</ParamField>
+
+<ParamField path="validateConnections" type="boolean" default="true">
+  When `true`, connections are validated before being acquired from the pool, resulting in additional requests to the database.
+  
+  This helps ensure that connections are still alive before use, but adds overhead.
+
+  ```typescript
+  {
+    validateConnections: true // default
+  }
+  ```
+</ParamField>
+
+<ParamField path="resetConnectionsOnRelease" type="boolean" default="false">
+  When `true`, connections are reset to their initial states when released back to the pool, resulting in additional requests to the database.
+  
+  This ensures clean connection state but adds overhead on every connection release.
+
+  ```typescript
+  {
+    resetConnectionsOnRelease: false // default
+  }
+  ```
+</ParamField>
+
+## Connection Configuration
+
+The tedious Connection accepts many configuration options:
+
+```typescript
+import * as Tedious from 'tedious'
+
+const connection = new Tedious.Connection({
+  // Server details
+  server: 'localhost',
+  
+  // Authentication
+  authentication: {
+    type: 'default', // or 'ntlm', 'azure-active-directory-password', etc.
+    options: {
+      userName: 'myuser',
+      password: 'mypassword',
+    },
+  },
+  
+  // Database options
+  options: {
+    database: 'mydb',
+    port: 1433,
+    trustServerCertificate: true, // Use true for local dev
+    encrypt: true, // Use encryption
+    requestTimeout: 30000, // 30 seconds
+    connectTimeout: 15000, // 15 seconds
+    rowCollectionOnRequestCompletion: true,
+  },
+})
+```
+
+## Pool Configuration
+
+Configure the tarn.js connection pool:
+
+```typescript
+import * as Tarn from 'tarn'
+
+{
+  tarn: {
+    ...Tarn,
+    options: {
+      // Required
+      min: 0, // Minimum pool size
+      max: 10, // Maximum pool size
+      
+      // Optional
+      acquireTimeoutMillis: 30000, // Timeout for acquiring connection
+      createTimeoutMillis: 30000, // Timeout for creating connection
+      destroyTimeoutMillis: 5000, // Timeout for destroying connection
+      idleTimeoutMillis: 30000, // Destroy idle connections after this time
+      reapIntervalMillis: 1000, // Check for idle connections interval
+      createRetryIntervalMillis: 200, // Retry interval on failed create
+      propagateCreateError: false, // Propagate create errors
+    }
+  }
+}
+```
+
+## Authentication Methods
+
+### SQL Server Authentication
+
+```typescript
+authentication: {
+  type: 'default',
+  options: {
+    userName: 'myuser',
+    password: 'mypassword',
+  },
+}
+```
+
+### Windows Authentication
+
+```typescript
+authentication: {
+  type: 'ntlm',
+  options: {
+    userName: 'DOMAIN\\username',
+    password: 'password',
+    domain: 'DOMAIN',
+  },
+}
+```
+
+### Azure Active Directory Password
+
+```typescript
+authentication: {
+  type: 'azure-active-directory-password',
+  options: {
+    userName: 'user@domain.com',
+    password: 'password',
+  },
+}
+```
+
+### Azure Active Directory Service Principal
+
+```typescript
+authentication: {
+  type: 'azure-active-directory-service-principal-secret',
+  options: {
+    clientId: 'your-client-id',
+    clientSecret: 'your-client-secret',
+    tenantId: 'your-tenant-id',
+  },
+}
+```
+
+## SSL/TLS Configuration
+
+For secure connections:
+
+```typescript
+import * as Tedious from 'tedious'
+import fs from 'fs'
+
+const connection = new Tedious.Connection({
+  server: 'myserver.database.windows.net',
+  authentication: { /* ... */ },
+  options: {
+    database: 'mydb',
+    encrypt: true, // Required for Azure SQL
+    trustServerCertificate: false, // Set to false for production
+    cryptoCredentialsDetails: {
+      ca: fs.readFileSync('/path/to/ca-cert.pem'),
+    },
+  },
+})
+```
+
+## Azure SQL Database
+
+Configuration for Azure SQL Database:
+
+```typescript
+import { Kysely, MssqlDialect } from 'kysely'
+import * as Tedious from 'tedious'
+import * as Tarn from 'tarn'
+
+const db = new Kysely<Database>({
+  dialect: new MssqlDialect({
+    tarn: {
+      ...Tarn,
+      options: { min: 0, max: 10 },
+    },
+    tedious: {
+      ...Tedious,
+      connectionFactory: () => new Tedious.Connection({
+        server: 'myserver.database.windows.net',
+        authentication: {
+          type: 'azure-active-directory-password',
+          options: {
+            userName: 'user@domain.com',
+            password: 'password',
+          },
+        },
+        options: {
+          database: 'mydb',
+          port: 1433,
+          encrypt: true, // Required
+          trustServerCertificate: false,
+        },
+      }),
+    },
+  })
+})
+```
+
+## Connection Validation
+
+Control when connections are validated:
+
+```typescript
+const db = new Kysely<Database>({
+  dialect: new MssqlDialect({
+    validateConnections: true, // Validate before acquisition
+    resetConnectionsOnRelease: false, // Don't reset on release
+    tarn: { /* ... */ },
+    tedious: { /* ... */ },
+  })
+})
+```
+
+<Info>
+  Setting `validateConnections` to `true` adds a small overhead but helps catch broken connections before they're used. Setting `resetConnectionsOnRelease` to `true` ensures clean state but adds more overhead.
+</Info>
+
+## Transactions and Isolation Levels
+
+Set transaction isolation levels:
+
+```typescript
+import { IsolationLevel } from 'kysely'
+
+await db.transaction()
+  .setIsolationLevel('serializable')
+  .execute(async (trx) => {
+    // Transaction body
+  })
+```
+
+Available isolation levels:
+- `read uncommitted`
+- `read committed`
+- `repeatable read`
+- `serializable`
+- `snapshot`
+
+## Related Types
+
+### Tedious
+
+**Source:** `src/dialect/mssql/mssql-dialect-config.ts:78`
+
+```typescript
+interface Tedious {
+  connectionFactory: () => TediousConnection | Promise<TediousConnection>
+  ISOLATION_LEVEL: TediousIsolationLevel
+  Request: TediousRequestClass
+  TYPES: TediousTypes
+}
+```
+
+### Tarn
+
+**Source:** `src/dialect/mssql/mssql-dialect-config.ts:178`
+
+```typescript
+interface Tarn {
+  options: Omit<TarnPoolOptions<any>, 'create' | 'destroy' | 'validate'>
+  Pool: typeof TarnPool
+}
+```
+
+### TarnPoolOptions
+
+**Source:** `src/dialect/mssql/mssql-dialect-config.ts:204`
+
+```typescript
+interface TarnPoolOptions<R> {
+  acquireTimeoutMillis?: number
+  create(cb: (err: Error | null, resource: R) => void): any | (() => Promise<R>)
+  createRetryIntervalMillis?: number
+  createTimeoutMillis?: number
+  destroy(resource: R): any
+  destroyTimeoutMillis?: number
+  idleTimeoutMillis?: number
+  log?(msg: string): any
+  max: number
+  min: number
+  propagateCreateError?: boolean
+  reapIntervalMillis?: number
+  validate?(resource: R): boolean
+}
+```
+
+### TediousConnection
+
+**Source:** `src/dialect/mssql/mssql-dialect-config.ts:90`
+
+The tedious Connection interface with methods for executing queries and managing transactions.
+
+### TediousTypes
+
+**Source:** `src/dialect/mssql/mssql-dialect-config.ts:158`
+
+Type definitions for SQL Server data types:
+
+```typescript
+interface TediousTypes {
+  NVarChar: TediousDataType
+  BigInt: TediousDataType
+  Int: TediousDataType
+  Float: TediousDataType
+  Bit: TediousDataType
+  DateTime: TediousDataType
+  VarBinary: TediousDataType
+  [x: string]: TediousDataType
+}
+```

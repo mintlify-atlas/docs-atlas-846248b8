@@ -1,0 +1,122 @@
+---
+title: ColumnType
+description: Specify different types for select, insert, and update operations on database columns
+---
+
+## Type Signature
+
+```typescript
+type ColumnType<
+  SelectType,
+  InsertType = SelectType,
+  UpdateType = SelectType,
+> = {
+  readonly __select__: SelectType
+  readonly __insert__: InsertType
+  readonly __update__: UpdateType
+}
+```
+
+## Overview
+
+`ColumnType` allows you to specify different types for select, insert, and update operations on a database column. This is particularly useful for:
+
+- Database-generated columns (IDs, timestamps)
+- Columns with different input/output formats (dates as strings for insert, Date objects for select)
+- Read-only columns that can't be inserted or updated
+
+## Type Parameters
+
+<ParamField path="SelectType" type="type" required>
+  The TypeScript type returned when selecting this column from the database.
+</ParamField>
+
+<ParamField path="InsertType" type="type" default="SelectType">
+  The TypeScript type accepted when inserting this column. Defaults to `SelectType` if not specified.
+</ParamField>
+
+<ParamField path="UpdateType" type="type" default="SelectType">
+  The TypeScript type accepted when updating this column. Defaults to `SelectType` if not specified.
+</ParamField>
+
+## Examples
+
+### Database-Generated Column
+
+Make a column optional in inserts and updates (useful for auto-incrementing IDs):
+
+```typescript
+interface PersonTable {
+  id: ColumnType<number, number | undefined, number>
+  name: string
+}
+```
+
+<Note>
+  The `Generated<T>` type is a shortcut for this pattern.
+</Note>
+
+### Read-Only Column
+
+Prevent insertion and update of a column:
+
+```typescript
+interface PersonTable {
+  id: ColumnType<number, never, never>
+  name: string
+}
+```
+
+<Note>
+  The `GeneratedAlways<T>` type is a shortcut for this pattern.
+</Note>
+
+### Different Types Per Operation
+
+Accept strings for insert, but prevent updates and return Date objects for selects:
+
+```typescript
+interface PersonTable {
+  id: Generated<number>
+  created_at: ColumnType<Date, string, never>
+  name: string
+}
+```
+
+With this definition:
+
+```typescript
+// Insert accepts string
+await db.insertInto('person')
+  .values({
+    created_at: '2024-01-01',
+    name: 'John'
+  })
+  .execute()
+
+// Select returns Date
+const person = await db
+  .selectFrom('person')
+  .selectAll()
+  .executeTakeFirst()
+// person.created_at is Date
+
+// Update doesn't allow created_at
+await db.updateTable('person')
+  .set({
+    created_at: '2024-01-02' // Type error!
+  })
+  .execute()
+```
+
+## Related Types
+
+- [`Generated<T>`](/api/types/generated) - Shortcut for database-generated columns
+- [`GeneratedAlways<T>`](/api/types/generated) - Shortcut for always-generated columns
+- [`Selectable<T>`](/api/types/selectable) - Extract select types from a table interface
+- [`Insertable<T>`](/api/types/insertable) - Extract insert types from a table interface
+- [`Updateable<T>`](/api/types/updateable) - Extract update types from a table interface
+
+## Source
+
+[View source on GitHub](https://github.com/kysely-org/kysely/blob/master/src/util/column-type.ts)

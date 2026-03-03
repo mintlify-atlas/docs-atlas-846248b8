@@ -1,0 +1,435 @@
+---
+title: Plugins
+description: Learn how to use and create Kysely plugins to transform queries and results
+---
+
+Kysely's plugin system allows you to intercept and modify queries before execution and transform results after execution. Plugins enable features like automatic column name transformation, query logging, and custom data parsing.
+
+## The KyselyPlugin Interface
+
+All plugins implement the `KyselyPlugin` interface:
+
+```typescript
+import type {
+  KyselyPlugin,
+  PluginTransformQueryArgs,
+  PluginTransformResultArgs,
+  QueryResult,
+  RootOperationNode,
+  UnknownRow
+} from 'kysely'
+
+interface KyselyPlugin {
+  /**
+   * This is called for each query before it is executed.
+   * You can modify the query by transforming its OperationNode tree.
+   */
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode
+
+  /**
+   * This method is called for each query after it has been executed.
+   * You can modify the result and return the modified result.
+   */
+  transformResult(
+    args: PluginTransformResultArgs
+  ): Promise<QueryResult<UnknownRow>>
+}
+
+interface PluginTransformQueryArgs {
+  readonly queryId: QueryId
+  readonly node: RootOperationNode
+}
+
+interface PluginTransformResultArgs {
+  readonly queryId: QueryId
+  readonly result: QueryResult<UnknownRow>
+}
+```
+
+## Installing Plugins
+
+Plugins are registered when creating a Kysely instance:
+
+```typescript
+import { Kysely, CamelCasePlugin } from 'kysely'
+
+const db = new Kysely<Database>({
+  dialect: new PostgresDialect({ /* ... */ }),
+  plugins: [new CamelCasePlugin()]
+})
+```
+
+Or add them to an existing instance:
+
+```typescript
+const dbWithPlugin = db.withPlugin(new CamelCasePlugin())
+```
+
+## Built-in Plugins
+
+### CamelCasePlugin
+
+Converts snake_case database identifiers to camelCase in JavaScript:
+
+```typescript
+import { CamelCasePlugin, Kysely, SqliteDialect } from 'kysely'
+import Database from 'better-sqlite3'
+
+// Define your database in camelCase
+interface CamelCasedDatabase {
+  userMetadata: {
+    firstName: string
+    lastName: string
+    createdAt: Date
+  }
+}
+
+const db = new Kysely<CamelCasedDatabase>({
+  dialect: new SqliteDialect({
+    database: new Database(':memory:'),
+  }),
+  plugins: [new CamelCasePlugin()],
+})
+
+// Use camelCase in your code
+const person = await db.selectFrom('userMetadata')
+  .where('firstName', '=', 'Jennifer')
+  .select(['firstName', 'lastName'])
+  .executeTakeFirst()
+
+if (person) {
+  console.log(person.firstName) // Typed as string
+}
+```
+
+Generated SQL:
+```sql
+select "first_name", "last_name" 
+from "user_metadata" 
+where "first_name" = ?
+```
+
+**Options:**
+
+```typescript
+new CamelCasePlugin({
+  // Transform to UPPER_CASE instead of snake_case
+  upperCase: true,
+  
+  // Add underscore before digits: foo12Bar => foo_12_bar
+  underscoreBeforeDigits: true,
+  
+  // Add underscore between uppercase letters: fooBAR => foo_b_a_r
+  underscoreBetweenUppercaseLetters: true,
+  
+  // Don't transform nested object keys
+  maintainNestedObjectKeys: false,
+})
+```
+
+### DeduplicateJoinsPlugin
+
+Automatically deduplicates identical JOIN clauses:
+
+```typescript
+import { DeduplicateJoinsPlugin } from 'kysely'
+
+const db = new Kysely<Database>({
+  dialect: /* ... */,
+  plugins: [new DeduplicateJoinsPlugin()]
+})
+
+// These joins are identical and will be deduplicated
+await db
+  .selectFrom('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  .innerJoin('pet', 'pet.owner_id', 'person.id') // Deduplicated
+  .selectAll()
+  .execute()
+```
+
+### ParseJSONResultsPlugin
+
+Automatically parses JSON columns:
+
+```typescript
+import { ParseJSONResultsPlugin } from 'kysely'
+
+const db = new Kysely<Database>({
+  dialect: /* ... */,
+  plugins: [new ParseJSONResultsPlugin()]
+})
+
+interface Database {
+  person: {
+    id: number
+    metadata: { tags: string[]; score: number } // JSON column
+  }
+}
+
+const person = await db
+  .selectFrom('person')
+  .selectAll()
+  .executeTakeFirst()
+
+// metadata is automatically parsed
+person?.metadata.tags // string[]
+```
+
+## Creating Custom Plugins
+
+### Basic Example: Query Logger
+
+```typescript
+import type {
+  KyselyPlugin,
+  PluginTransformQueryArgs,
+  PluginTransformResultArgs,
+  QueryResult,
+  RootOperationNode,
+  UnknownRow
+} from 'kysely'
+
+class QueryLoggerPlugin implements KyselyPlugin {
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
+    console.log('Executing query:', args.node)
+    return args.node
+  }
+
+  async transformResult(
+    args: PluginTransformResultArgs
+  ): Promise<QueryResult<UnknownRow>> {
+    console.log('Query returned', args.result.rows.length, 'rows')
+    return args.result
+  }
+}
+
+// Usage
+const db = new Kysely<Database>({
+  dialect: /* ... */,
+  plugins: [new QueryLoggerPlugin()]
+})
+```
+
+### Advanced Example: Timing Plugin
+
+```typescript
+class QueryTimingPlugin implements KyselyPlugin {
+  private timings = new WeakMap<any, number>()
+
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
+    this.timings.set(args.queryId, Date.now())
+    return args.node
+  }
+
+  async transformResult(
+    args: PluginTransformResultArgs
+  ): Promise<QueryResult<UnknownRow>> {
+    const startTime = this.timings.get(args.queryId)
+    
+    if (startTime) {
+      const duration = Date.now() - startTime
+      console.log(`Query executed in ${duration}ms`)
+    }
+    
+    return args.result
+  }
+}
+```
+
+### Sharing Data Between transformQuery and transformResult
+
+Use a `WeakMap` with `queryId` as the key:
+
+```typescript
+import type {
+  KyselyPlugin,
+  QueryResult,
+  RootOperationNode,
+  UnknownRow
+} from 'kysely'
+
+interface MyData {
+  startTime: number
+  queryType: string
+}
+
+class MyPlugin implements KyselyPlugin {
+  private data = new WeakMap<any, MyData>()
+
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
+    const myData: MyData = {
+      startTime: Date.now(),
+      queryType: args.node.kind
+    }
+
+    // Store data for this query
+    this.data.set(args.queryId, myData)
+
+    return args.node
+  }
+
+  async transformResult(
+    args: PluginTransformResultArgs
+  ): Promise<QueryResult<UnknownRow>> {
+    // Retrieve data for this query
+    const myData = this.data.get(args.queryId)
+
+    if (myData) {
+      console.log(`${myData.queryType} took ${Date.now() - myData.startTime}ms`)
+    }
+
+    return args.result
+  }
+}
+```
+
+<Warning>
+  Always use `WeakMap` instead of `Map` for storing query data. `transformQuery` is not always matched by `transformResult`, which could cause memory leaks with strong references.
+</Warning>
+
+### Transforming the Query AST
+
+Use an `OperationNodeTransformer` to modify query structure:
+
+```typescript
+import {
+  OperationNodeTransformer,
+  SelectQueryNode,
+  LimitNode
+} from 'kysely'
+
+class AutoLimitPlugin implements KyselyPlugin {
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
+    const transformer = new AutoLimitTransformer()
+    return transformer.transformNode(args.node)
+  }
+
+  async transformResult(
+    args: PluginTransformResultArgs
+  ): Promise<QueryResult<UnknownRow>> {
+    return args.result
+  }
+}
+
+class AutoLimitTransformer extends OperationNodeTransformer {
+  protected override transformSelectQuery(
+    node: SelectQueryNode
+  ): SelectQueryNode {
+    // Add LIMIT 1000 if no limit exists
+    if (!node.limit) {
+      return {
+        ...super.transformSelectQuery(node),
+        limit: LimitNode.create(1000)
+      }
+    }
+    
+    return super.transformSelectQuery(node)
+  }
+}
+```
+
+## Plugin Execution Order
+
+Plugins execute in the order they're registered:
+
+```typescript
+const db = new Kysely<Database>({
+  dialect: /* ... */,
+  plugins: [
+    new PluginA(), // Runs first
+    new PluginB(), // Runs second
+    new PluginC()  // Runs last
+  ]
+})
+```
+
+For `transformQuery`, plugins run in order:
+```
+Query → PluginA → PluginB → PluginC → Database
+```
+
+For `transformResult`, plugins run in reverse:
+```
+Database → PluginC → PluginB → PluginA → Result
+```
+
+## Dynamic Plugin Management
+
+```typescript
+// Add a plugin
+const dbWithPlugin = db.withPlugin(new MyPlugin())
+
+// Add at front (executes first)
+const dbWithPluginFirst = db.withPluginAtFront(new MyPlugin())
+
+// Remove all plugins
+const dbWithoutPlugins = db.withoutPlugins()
+```
+
+## Real-World Plugin Examples
+
+### Soft Delete Plugin
+
+```typescript
+class SoftDeletePlugin implements KyselyPlugin {
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
+    const transformer = new SoftDeleteTransformer()
+    return transformer.transformNode(args.node)
+  }
+
+  async transformResult(
+    args: PluginTransformResultArgs
+  ): Promise<QueryResult<UnknownRow>> {
+    return args.result
+  }
+}
+
+class SoftDeleteTransformer extends OperationNodeTransformer {
+  protected override transformSelectQuery(
+    node: SelectQueryNode
+  ): SelectQueryNode {
+    // Automatically add WHERE deleted_at IS NULL
+    // Implementation details omitted for brevity
+    return super.transformSelectQuery(node)
+  }
+}
+```
+
+### Row-Level Security Plugin
+
+```typescript
+class TenantPlugin implements KyselyPlugin {
+  constructor(private tenantId: string) {}
+
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
+    // Add WHERE tenant_id = this.tenantId to all queries
+    const transformer = new TenantTransformer(this.tenantId)
+    return transformer.transformNode(args.node)
+  }
+
+  async transformResult(
+    args: PluginTransformResultArgs
+  ): Promise<QueryResult<UnknownRow>> {
+    return args.result
+  }
+}
+```
+
+## Best Practices
+
+<Tip>
+  Keep plugins focused on a single responsibility. Create multiple small plugins rather than one large plugin.
+</Tip>
+
+<Tip>
+  Always return a value from `transformQuery` and `transformResult`. Returning `undefined` will cause errors.
+</Tip>
+
+<Warning>
+  Plugins that modify the query structure can break type safety. Test thoroughly when creating AST-transforming plugins.
+</Warning>
+
+<Note>
+  Use `WeakMap` with `queryId` to share data between `transformQuery` and `transformResult` to prevent memory leaks.
+</Note>

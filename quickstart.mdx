@@ -1,80 +1,394 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quick Start
+description: Get started with Kysely in minutes by setting up your database schema and running your first type-safe query.
 ---
 
-## Get started in three steps
+# Quick Start
 
-Get your documentation site running locally and make your first customization.
+This guide will help you set up Kysely and execute your first type-safe SQL query in minutes.
 
-### Step 1: Set up your local environment
+<Steps>
+  <Step title="Define Your Database Schema">
+    Create TypeScript interfaces that describe your database structure. Kysely uses these to provide type-safety and autocompletion.
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```typescript src/types.ts
+    import {
+      ColumnType,
+      Generated,
+      Insertable,
+      Selectable,
+      Updateable,
+    } from 'kysely'
 
-### Step 2: Deploy your changes
+    // Database interface - maps table names to table schemas
+    export interface Database {
+      person: PersonTable
+      pet: PetTable
+    }
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+    // Table schema for 'person' table
+    export interface PersonTable {
+      // Generated columns (like auto-increment IDs) are marked with Generated<T>
+      // This makes them optional in inserts and updates
+      id: Generated<number>
+      
+      first_name: string
+      
+      // Nullable columns use TypeScript's union with null
+      last_name: string | null
+      
+      gender: 'man' | 'woman' | 'other'
+      
+      // ColumnType allows different types for select, insert, and update
+      created_at: ColumnType<Date, string | undefined, never>
+    }
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+    // Helper types for working with person records
+    export type Person = Selectable<PersonTable>
+    export type NewPerson = Insertable<PersonTable>
+    export type PersonUpdate = Updateable<PersonTable>
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    export interface PetTable {
+      id: Generated<number>
+      name: string
+      owner_id: number
+      species: 'dog' | 'cat'
+    }
 
-### Step 3: Go live
+    export type Pet = Selectable<PetTable>
+    export type NewPet = Insertable<PetTable>
+    export type PetUpdate = Updateable<PetTable>
+    ```
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    <Note>
+      For production applications, consider using [kysely-codegen](https://github.com/RobinBlomberg/kysely-codegen) to automatically generate types from your database schema.
+    </Note>
+  </Step>
 
-## Next steps
+  <Step title="Create a Kysely Instance">
+    Set up a Kysely instance with your database dialect and connection details.
 
-Now that you have your docs running, explore these key features:
+    <Tabs>
+      <Tab title="PostgreSQL">
+        ```typescript src/database.ts
+        import { Database } from './types'
+        import { Kysely, PostgresDialect } from 'kysely'
+        import { Pool } from 'pg'
 
-<CardGroup cols={2}>
+        const dialect = new PostgresDialect({
+          pool: new Pool({
+            database: 'test',
+            host: 'localhost',
+            user: 'admin',
+            port: 5432,
+            max: 10,
+          })
+        })
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
+        // Create a single instance and export it
+        export const db = new Kysely<Database>({
+          dialect,
+        })
+        ```
+      </Tab>
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
+      <Tab title="MySQL">
+        ```typescript src/database.ts
+        import { Database } from './types'
+        import { Kysely, MysqlDialect } from 'kysely'
+        import { createPool } from 'mysql2'
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
+        const dialect = new MysqlDialect({
+          pool: createPool({
+            database: 'test',
+            host: 'localhost',
+            user: 'admin',
+            password: '123',
+            port: 3306,
+            connectionLimit: 10,
+          })
+        })
 
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
+        export const db = new Kysely<Database>({
+          dialect,
+        })
+        ```
 
+        <Warning>
+          Do **not** import from `mysql2/promise`! Use the default `mysql2` import.
+        </Warning>
+      </Tab>
+
+      <Tab title="SQLite">
+        ```typescript src/database.ts
+        import { Database } from './types'
+        import { Kysely, SqliteDialect } from 'kysely'
+        import SQLite from 'better-sqlite3'
+
+        const dialect = new SqliteDialect({
+          database: new SQLite('database.db'),
+        })
+
+        export const db = new Kysely<Database>({
+          dialect,
+        })
+        ```
+      </Tab>
+    </Tabs>
+
+    <Warning>
+      **Keep secrets safe!** Never hardcode credentials. Use environment variables or a secrets manager:
+      
+      ```typescript
+      const dialect = new PostgresDialect({
+        pool: new Pool({
+          database: process.env.DB_NAME,
+          host: process.env.DB_HOST,
+          user: process.env.DB_USER,
+          password: process.env.DB_PASSWORD,
+          port: parseInt(process.env.DB_PORT || '5432'),
+        })
+      })
+      ```
+    </Warning>
+  </Step>
+
+  <Step title="Write Your First Queries">
+    Now you can start writing type-safe queries! Here are common operations:
+
+    <CodeGroup>
+    ```typescript Select Query
+    import { db } from './database'
+
+    // Find a person by ID
+    export async function findPersonById(id: number) {
+      return await db
+        .selectFrom('person')
+        .where('id', '=', id)
+        .selectAll()
+        .executeTakeFirst()
+    }
+
+    // Find people with criteria
+    export async function findPeople(criteria: Partial<Person>) {
+      let query = db.selectFrom('person')
+
+      if (criteria.id) {
+        // Kysely is immutable - always re-assign!
+        query = query.where('id', '=', criteria.id)
+      }
+
+      if (criteria.first_name) {
+        query = query.where('first_name', '=', criteria.first_name)
+      }
+
+      if (criteria.last_name !== undefined) {
+        query = query.where(
+          'last_name',
+          criteria.last_name === null ? 'is' : '=',
+          criteria.last_name
+        )
+      }
+
+      return await query.selectAll().execute()
+    }
+    ```
+
+    ```typescript Insert Query
+    import { db } from './database'
+    import { NewPerson } from './types'
+
+    export async function createPerson(person: NewPerson) {
+      return await db
+        .insertInto('person')
+        .values(person)
+        .returningAll()
+        .executeTakeFirstOrThrow()
+    }
+
+    // Usage:
+    const newPerson = await createPerson({
+      first_name: 'John',
+      last_name: 'Doe',
+      gender: 'man',
+      created_at: new Date().toISOString(),
+    })
+    ```
+
+    ```typescript Update Query
+    import { db } from './database'
+    import { PersonUpdate } from './types'
+
+    export async function updatePerson(
+      id: number,
+      updateWith: PersonUpdate
+    ) {
+      await db
+        .updateTable('person')
+        .set(updateWith)
+        .where('id', '=', id)
+        .execute()
+    }
+
+    // Usage:
+    await updatePerson(1, {
+      first_name: 'Jane',
+    })
+    ```
+
+    ```typescript Delete Query
+    import { db } from './database'
+
+    export async function deletePerson(id: number) {
+      return await db
+        .deleteFrom('person')
+        .where('id', '=', id)
+        .returningAll()
+        .executeTakeFirst()
+    }
+    ```
+
+    ```typescript Join Query
+    import { db } from './database'
+
+    // Get persons with their pets
+    export async function getPersonWithPets(personId: number) {
+      return await db
+        .selectFrom('person')
+        .innerJoin('pet', 'pet.owner_id', 'person.id')
+        .select([
+          'person.id',
+          'person.first_name',
+          'person.last_name',
+          'pet.name as pet_name',
+          'pet.species',
+        ])
+        .where('person.id', '=', personId)
+        .execute()
+    }
+    ```
+    </CodeGroup>
+
+    <Note>
+      **Kysely is immutable!** Query builder methods return a new query builder instance. Always re-assign the result:
+      
+      ```typescript
+      // ✅ Correct
+      let query = db.selectFrom('person')
+      query = query.where('id', '=', 1)
+      
+      // ❌ Wrong - this does nothing!
+      let query = db.selectFrom('person')
+      query.where('id', '=', 1)
+      ```
+    </Note>
+  </Step>
+
+  <Step title="Execute and Handle Results">
+    Kysely provides several execution methods depending on your needs:
+
+    ```typescript
+    // executeTakeFirst() - returns first row or undefined
+    const person = await db
+      .selectFrom('person')
+      .selectAll()
+      .executeTakeFirst()
+    // Type: Person | undefined
+
+    // executeTakeFirstOrThrow() - throws if no rows found
+    const person = await db
+      .selectFrom('person')
+      .selectAll()
+      .executeTakeFirstOrThrow()
+    // Type: Person
+
+    // execute() - returns all rows as array
+    const people = await db
+      .selectFrom('person')
+      .selectAll()
+      .execute()
+    // Type: Person[]
+    ```
+  </Step>
+</Steps>
+
+## Complete Example
+
+Here's a complete working example using the user repository pattern from the Kysely source:
+
+```typescript src/user.repository.ts
+import { Kysely, Generated, Insertable, Selectable } from 'kysely'
+
+// Define the schema
+export interface UserTable {
+  user_id: Generated<string>
+  first_name: string | null
+  last_name: string | null
+  email: string | null
+  created_at: Generated<Date>
+}
+
+export type UserRow = Selectable<UserTable>
+export type InsertableUserRow = Insertable<UserTable>
+
+export interface Database {
+  user: UserTable
+}
+
+// Repository functions
+export async function insertUser(
+  db: Kysely<Database>,
+  user: InsertableUserRow,
+): Promise<UserRow> {
+  const insertedUser = await db
+    .insertInto('user')
+    .values(user)
+    .returningAll()
+    .executeTakeFirstOrThrow()
+
+  return insertedUser
+}
+
+export async function findUserById(
+  db: Kysely<Database>,
+  id: string,
+): Promise<UserRow | undefined> {
+  const user = await db
+    .selectFrom('user')
+    .where('user_id', '=', id)
+    .selectAll('user')
+    .executeTakeFirst()
+
+  return user
+}
+
+export async function setUserEmail(
+  db: Kysely<Database>,
+  id: string,
+  email: string,
+): Promise<void> {
+  await db
+    .updateTable('user')
+    .where('user_id', '=', id)
+    .set({ email })
+    .execute()
+}
+```
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Migrations" icon="arrows-rotate" href="https://kysely.dev/docs/migrations">
+    Learn how to manage database schema changes
+  </Card>
+  <Card title="Advanced Queries" icon="code" href="https://kysely.dev/docs/category/examples">
+    Explore joins, subqueries, CTEs, and more
+  </Card>
+  <Card title="API Reference" icon="book" href="https://kysely-org.github.io/kysely-apidoc/">
+    Browse the complete API documentation
+  </Card>
 </CardGroup>
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  **Pro tip**: Hover over any Kysely method in your IDE to see inline API documentation with examples!
 </Note>

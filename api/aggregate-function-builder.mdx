@@ -1,0 +1,434 @@
+---
+title: AggregateFunctionBuilder
+description: Builder for SQL aggregate functions with filtering, ordering, and window function support
+---
+
+# AggregateFunctionBuilder
+
+`AggregateFunctionBuilder` is returned by aggregate function calls from the `FunctionModule`. It provides methods for adding modifiers like `distinct`, `filter`, `order by`, and `over` clauses to aggregate functions.
+
+## Type Parameters
+
+<ParamField path="DB" type="object" required>
+  The database schema type
+</ParamField>
+
+<ParamField path="TB" type="keyof DB" required>
+  The table references available in the current query context
+</ParamField>
+
+<ParamField path="O" type="any" default="unknown">
+  The output type of the aggregate function
+</ParamField>
+
+## Methods
+
+### as
+
+Returns an aliased version of the function.
+
+```typescript
+as<A extends string>(
+  alias: A,
+): AliasedAggregateFunctionBuilder<DB, TB, O, A>
+```
+
+<ParamField path="alias" type="string" required>
+  The alias name for the aggregate function result
+</ParamField>
+
+In addition to slapping `as "the_alias"` to the end of the SQL, this method also provides strict typing.
+
+**Example:**
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .select(
+    (eb) => eb.fn.count<number>('id').as('person_count')
+  )
+  .executeTakeFirstOrThrow()
+
+// `person_count: number` field exists in the result type.
+console.log(result.person_count)
+```
+
+### distinct
+
+Adds a `distinct` clause inside the function.
+
+```typescript
+distinct(): AggregateFunctionBuilder<DB, TB, O>
+```
+
+**Example:**
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .select((eb) =>
+    eb.fn.count<number>('first_name').distinct().as('first_name_count')
+  )
+  .executeTakeFirstOrThrow()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select count(distinct "first_name") as "first_name_count"
+from "person"
+```
+
+### orderBy
+
+Adds an `order by` clause inside the aggregate function.
+
+```typescript
+orderBy<OE extends OrderByExpression<DB, TB, {}>>(
+  expr: OE,
+  modifiers?: OrderByModifiers,
+): AggregateFunctionBuilder<DB, TB, O>
+```
+
+<ParamField path="expr" type="OrderByExpression" required>
+  Column or expression to order by
+</ParamField>
+
+<ParamField path="modifiers" type="OrderByModifiers">
+  Optional order modifiers (e.g., `asc`, `desc`, nulls handling)
+</ParamField>
+
+**Example:**
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  .select((eb) =>
+    eb.fn.jsonAgg('pet').orderBy('pet.name').as('person_pets')
+  )
+  .executeTakeFirstOrThrow()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select json_agg("pet" order by "pet"."name") as "person_pets"
+from "person"
+inner join "pet" ON "pet"."owner_id" = "person"."id"
+```
+
+### clearOrderBy
+
+Removes all order by clauses from the aggregate function.
+
+```typescript
+clearOrderBy(): AggregateFunctionBuilder<DB, TB, O>
+```
+
+### withinGroupOrderBy
+
+Adds a `within group` clause with a nested `order by` clause after the function.
+
+```typescript
+withinGroupOrderBy<OE extends OrderByExpression<DB, TB, {}>>(
+  expr: OE,
+  modifiers?: OrderByModifiers,
+): AggregateFunctionBuilder<DB, TB, O>
+```
+
+<ParamField path="expr" type="OrderByExpression" required>
+  Column or expression to order by
+</ParamField>
+
+<ParamField path="modifiers" type="OrderByModifiers">
+  Optional order modifiers
+</ParamField>
+
+This is only supported by some dialects like PostgreSQL or MS SQL Server.
+
+**Example:**
+
+Most frequent person name:
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .select((eb) => [
+    eb.fn
+      .agg<string>('mode')
+      .withinGroupOrderBy('person.first_name')
+      .as('most_frequent_name')
+  ])
+  .executeTakeFirstOrThrow()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select mode() within group (order by "person"."first_name") as "most_frequent_name"
+from "person"
+```
+
+### filterWhere
+
+Adds a `filter` clause with a nested `where` clause after the function.
+
+```typescript
+filterWhere<
+  RE extends ReferenceExpression<DB, TB>,
+  VE extends OperandValueExpressionOrList<DB, TB, RE>,
+>(
+  lhs: RE,
+  op: ComparisonOperatorExpression,
+  rhs: VE,
+): AggregateFunctionBuilder<DB, TB, O>
+
+filterWhere<E extends ExpressionOrFactory<DB, TB, SqlBool>>(
+  expression: E,
+): AggregateFunctionBuilder<DB, TB, O>
+```
+
+<ParamField path="lhs" type="ReferenceExpression" required>
+  Left-hand side column reference
+</ParamField>
+
+<ParamField path="op" type="ComparisonOperatorExpression" required>
+  Comparison operator
+</ParamField>
+
+<ParamField path="rhs" type="OperandValueExpressionOrList" required>
+  Right-hand side value or expression
+</ParamField>
+
+<ParamField path="expression" type="ExpressionOrFactory">
+  Alternative: full expression or factory function
+</ParamField>
+
+**Example:**
+
+Count by gender:
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .select((eb) => [
+    eb.fn
+      .count<number>('id')
+      .filterWhere('gender', '=', 'female')
+      .as('female_count'),
+    eb.fn
+      .count<number>('id')
+      .filterWhere('gender', '=', 'male')
+      .as('male_count'),
+    eb.fn
+      .count<number>('id')
+      .filterWhere('gender', '=', 'other')
+      .as('other_count'),
+  ])
+  .executeTakeFirstOrThrow()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select
+  count("id") filter(where "gender" = $1) as "female_count",
+  count("id") filter(where "gender" = $2) as "male_count",
+  count("id") filter(where "gender" = $3) as "other_count"
+from "person"
+```
+
+### filterWhereRef
+
+Adds a `filter` clause with a nested `where` clause after the function, where both sides of the operator are references to columns.
+
+```typescript
+filterWhereRef<
+  LRE extends ReferenceExpression<DB, TB>,
+  RRE extends ReferenceExpression<DB, TB>,
+>(
+  lhs: LRE,
+  op: ComparisonOperatorExpression,
+  rhs: RRE,
+): AggregateFunctionBuilder<DB, TB, O>
+```
+
+<ParamField path="lhs" type="ReferenceExpression" required>
+  Left-hand side column reference
+</ParamField>
+
+<ParamField path="op" type="ComparisonOperatorExpression" required>
+  Comparison operator
+</ParamField>
+
+<ParamField path="rhs" type="ReferenceExpression" required>
+  Right-hand side column reference
+</ParamField>
+
+**Example:**
+
+Count people with same first and last names versus general public:
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .select((eb) => [
+    eb.fn
+      .count<number>('id')
+      .filterWhereRef('first_name', '=', 'last_name')
+      .as('repeat_name_count'),
+    eb.fn.count<number>('id').as('total_count'),
+  ])
+  .executeTakeFirstOrThrow()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select
+  count("id") filter(where "first_name" = "last_name") as "repeat_name_count",
+  count("id") as "total_count"
+from "person"
+```
+
+### over
+
+Adds an `over` clause (window functions) after the function.
+
+```typescript
+over(
+  over?: OverBuilderCallback<DB, TB>,
+): AggregateFunctionBuilder<DB, TB, O>
+```
+
+<ParamField path="over" type="OverBuilderCallback">
+  Optional callback that returns an OverBuilder with partition by and order by clauses
+</ParamField>
+
+**Example:**
+
+Simple window function:
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .select(
+    (eb) => eb.fn.avg<number>('age').over().as('average_age')
+  )
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select avg("age") over() as "average_age"
+from "person"
+```
+
+**With partition and order by:**
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .select(
+    (eb) => eb.fn.avg<number>('age').over(
+      ob => ob.partitionBy('last_name').orderBy('first_name', 'asc')
+    ).as('average_age')
+  )
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select avg("age") over(partition by "last_name" order by "first_name" asc) as "average_age"
+from "person"
+```
+
+### $call
+
+Simply calls the provided function passing `this` as the only argument. `$call` returns what the provided function returns.
+
+```typescript
+$call<T>(func: (qb: this) => T): T
+```
+
+<ParamField path="func" type="function" required>
+  Function to call with this builder as argument
+</ParamField>
+
+### $castTo
+
+Casts the expression to the given type.
+
+```typescript
+$castTo<C>(): AggregateFunctionBuilder<DB, TB, C>
+```
+
+<ParamField path="C" type="type parameter" required>
+  The new output type
+</ParamField>
+
+This method call doesn't change the SQL in any way. This methods simply returns a copy of this `AggregateFunctionBuilder` with a new output type.
+
+### $notNull
+
+Omit null from the expression's type.
+
+```typescript
+$notNull(): AggregateFunctionBuilder<DB, TB, Exclude<O, null>>
+```
+
+This function can be useful in cases where you know an expression can't be null, but Kysely is unable to infer it.
+
+This method call doesn't change the SQL in any way. This methods simply returns a copy of `this` with a new output type.
+
+### toOperationNode
+
+Converts the builder to an operation node for internal use.
+
+```typescript
+toOperationNode(): AggregateFunctionNode
+```
+
+## Related Types
+
+### AliasedAggregateFunctionBuilder
+
+`AggregateFunctionBuilder` with an alias. The result of calling `AggregateFunctionBuilder.as`.
+
+```typescript
+class AliasedAggregateFunctionBuilder<
+  DB,
+  TB extends keyof DB,
+  O = unknown,
+  A extends string = never,
+>
+```
+
+<ParamField path="DB" type="object" required>
+  The database schema type
+</ParamField>
+
+<ParamField path="TB" type="keyof DB" required>
+  The table references
+</ParamField>
+
+<ParamField path="O" type="any">
+  The output type
+</ParamField>
+
+<ParamField path="A" type="string">
+  The alias name
+</ParamField>
+
+### OverBuilderCallback
+
+Callback type for the `over` method.
+
+```typescript
+type OverBuilderCallback<DB, TB extends keyof DB> = (
+  builder: OverBuilder<DB, TB>,
+) => OverBuilder<any, any>
+```

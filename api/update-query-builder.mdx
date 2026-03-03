@@ -1,0 +1,456 @@
+---
+title: 'UpdateQueryBuilder'
+description: 'Build and execute UPDATE queries'
+---
+
+# UpdateQueryBuilder
+
+Builder for constructing UPDATE queries with type-safe value updates.
+
+## Type Parameters
+
+- `DB` - The database schema type
+- `UT` - The table name being updated
+- `TB` - Union of table names available (for joins)
+- `O` - The output type (UpdateResult or custom with returning)
+
+## Methods
+
+### set
+
+```ts
+set(
+  update: UpdateObjectExpression<DB, TB, UT>
+): UpdateQueryBuilder<DB, UT, TB, O>
+
+set<RE extends ReferenceExpression<DB, UT>>(
+  key: RE,
+  value: ValueExpression<DB, TB, ExtractUpdateTypeFromReferenceExpression<DB, UT, RE>>
+): UpdateQueryBuilder<DB, UT, TB, O>
+```
+
+Sets the values to update. Takes an object whose keys are column names and values are values to update.
+
+The return value is an instance of `UpdateResult`. Use `returning` on supported databases to get the updated rows.
+
+**Examples:**
+
+Update a single row:
+
+```ts
+const result = await db
+  .updateTable('person')
+  .set({
+    first_name: 'Jennifer',
+    last_name: 'Aniston'
+  })
+  .where('id', '=', 1)
+  .executeTakeFirst()
+```
+
+Complex values with callback:
+
+```ts
+const result = await db
+  .updateTable('person')
+  .set((eb) => ({
+    age: eb('age', '+', 1),
+    first_name: eb.selectFrom('pet').select('name').limit(1),
+    last_name: 'updated',
+  }))
+  .where('id', '=', 1)
+  .executeTakeFirst()
+```
+
+Two-argument form:
+
+```ts
+import { sql } from 'kysely'
+
+const result = await db
+  .updateTable('person')
+  .set('first_name', 'Foo')
+  .set(sql<string>`address['postalCode']`, (eb) => eb.val('61710'))
+  .where('id', '=', 1)
+  .executeTakeFirst()
+```
+
+With returning (PostgreSQL):
+
+```ts
+const row = await db
+  .updateTable('person')
+  .set({
+    first_name: 'Jennifer',
+    last_name: 'Aniston'
+  })
+  .where('id', '=', 1)
+  .returning('id')
+  .executeTakeFirstOrThrow()
+
+row.id
+```
+
+MySQL multi-table update:
+
+```ts
+const result = await db
+  .updateTable(['person', 'pet'])
+  .set('person.first_name', 'Updated person')
+  .set('pet.name', 'Updated doggo')
+  .whereRef('person.id', '=', 'pet.owner_id')
+  .where('person.id', '=', 1)
+  .executeTakeFirst()
+```
+
+### where
+
+```ts
+where<RE extends ReferenceExpression<DB, TB>>(
+  lhs: RE,
+  op: ComparisonOperatorExpression,
+  rhs: OperandValueExpressionOrList<DB, TB, RE>
+): UpdateQueryBuilder<DB, UT, TB, O>
+
+where<E extends ExpressionOrFactory<DB, TB, SqlBool>>(
+  expression: E
+): UpdateQueryBuilder<DB, UT, TB, O>
+```
+
+Adds a WHERE clause to the query. Multiple where calls are combined with AND.
+
+See `WhereInterface` documentation for more examples.
+
+### whereRef
+
+```ts
+whereRef<LRE extends ReferenceExpression<DB, TB>, RRE extends ReferenceExpression<DB, TB>>(
+  lhs: LRE,
+  op: ComparisonOperatorExpression,
+  rhs: RRE
+): UpdateQueryBuilder<DB, UT, TB, O>
+```
+
+Adds a WHERE clause that compares two column references.
+
+### from
+
+```ts
+from<TE extends TableExpression<DB, TB>>(
+  table: TE
+): UpdateQueryBuilder<From<DB, TE>, UT, FromTables<DB, TB, TE>, O>
+
+from<TE extends TableExpression<DB, TB>>(
+  table: TE[]
+): UpdateQueryBuilder<From<DB, TE>, UT, FromTables<DB, TB, TE>, O>
+```
+
+Adds a FROM clause to the update query (PostgreSQL).
+
+**Example:**
+
+```ts
+db.updateTable('person')
+  .from('pet')
+  .set((eb) => ({
+    first_name: eb.ref('pet.name')
+  }))
+  .whereRef('pet.owner_id', '=', 'person.id')
+```
+
+### innerJoin
+
+```ts
+innerJoin<TE extends TableExpression<DB, TB>>(
+  table: TE,
+  k1: JoinReferenceExpression<DB, TB, TE>,
+  k2: JoinReferenceExpression<DB, TB, TE>
+): UpdateQueryBuilderWithInnerJoin<DB, UT, TB, O, TE>
+
+innerJoin<TE extends TableExpression<DB, TB>>(
+  table: TE,
+  callback: JoinCallbackExpression<DB, TB, TE>
+): UpdateQueryBuilderWithInnerJoin<DB, UT, TB, O, TE>
+```
+
+Joins another table using an inner join.
+
+See `SelectQueryBuilder.innerJoin` for examples.
+
+### leftJoin
+
+```ts
+leftJoin<TE extends TableExpression<DB, TB>>(
+  table: TE,
+  ...
+): UpdateQueryBuilderWithLeftJoin<DB, UT, TB, O, TE>
+```
+
+Just like `innerJoin` but adds a left join instead.
+
+### rightJoin
+
+```ts
+rightJoin<TE extends TableExpression<DB, TB>>(
+  table: TE,
+  ...
+): UpdateQueryBuilderWithRightJoin<DB, UT, TB, O, TE>
+```
+
+Just like `innerJoin` but adds a right join instead.
+
+### fullJoin
+
+```ts
+fullJoin<TE extends TableExpression<DB, TB>>(
+  table: TE,
+  ...
+): UpdateQueryBuilderWithFullJoin<DB, UT, TB, O, TE>
+```
+
+Just like `innerJoin` but adds a full join instead.
+
+### returning
+
+```ts
+returning<SE extends SelectExpression<DB, TB>>(
+  selection: SE
+): UpdateQueryBuilder<DB, UT, TB, ReturningRow<DB, TB, O, SE>>
+
+returning<SE extends SelectExpression<DB, TB>>(
+  selections: ReadonlyArray<SE>
+): UpdateQueryBuilder<DB, UT, TB, ReturningRow<DB, TB, O, SE>>
+
+returning<CB extends SelectCallback<DB, TB>>(
+  callback: CB
+): UpdateQueryBuilder<DB, UT, TB, ReturningCallbackRow<DB, TB, O, CB>>
+```
+
+Adds a RETURNING clause to the query (supported on PostgreSQL, SQLite, MS SQL Server).
+
+**Example:**
+
+```ts
+const result = await db
+  .updateTable('person')
+  .set({ first_name: 'John' })
+  .where('id', '=', 1)
+  .returning(['id', 'first_name'])
+  .executeTakeFirstOrThrow()
+```
+
+### returningAll
+
+```ts
+returningAll(): UpdateQueryBuilder<DB, UT, TB, ReturningAllRow<DB, TB, O>>
+
+returningAll<T extends TB>(
+  table: T
+): UpdateQueryBuilder<DB, UT, TB, ReturningAllRow<DB, T, O>>
+
+returningAll<T extends TB>(
+  tables: ReadonlyArray<T>
+): UpdateQueryBuilder<DB, UT, TB, ReturningAllRow<DB, T, O>>
+```
+
+Adds a `returning *` or `returning table.*` clause to the query.
+
+### output
+
+```ts
+output<OE extends OutputExpression<DB, UT>>(
+  selection: OE
+): UpdateQueryBuilder<...>
+
+output<OE extends OutputExpression<DB, UT>>(
+  selections: readonly OE[]
+): UpdateQueryBuilder<...>
+```
+
+Adds an OUTPUT clause (MS SQL Server).
+
+### outputAll
+
+```ts
+outputAll(
+  table: OutputPrefix
+): UpdateQueryBuilder<DB, UT, TB, ReturningAllRow<DB, TB, O>>
+```
+
+Adds an `output *` clause (MS SQL Server).
+
+### top
+
+```ts
+top(
+  expression: number | bigint,
+  modifiers?: 'percent'
+): UpdateQueryBuilder<DB, UT, TB, O>
+```
+
+Changes an `update` query to an `update top` query (MS SQL Server).
+
+**Example:**
+
+```ts
+await db.updateTable('person')
+  .top(1)
+  .set({ first_name: 'Foo' })
+  .where('age', '>', 18)
+  .executeTakeFirstOrThrow()
+```
+
+### limit
+
+```ts
+limit(
+  limit: ValueExpression<DB, TB, number>
+): UpdateQueryBuilder<DB, UT, TB, O>
+```
+
+Adds a LIMIT clause to the update query (MySQL, SQLite with `SQLITE_ENABLE_UPDATE_DELETE_LIMIT`).
+
+**Example:**
+
+```ts
+await db
+  .updateTable('person')
+  .set({ first_name: 'Foo' })
+  .limit(2)
+  .execute()
+```
+
+### orderBy
+
+```ts
+orderBy<OE extends OrderByExpression<DB, TB, {}>>(
+  expr: OE,
+  modifiers?: OrderByModifiers
+): UpdateQueryBuilder<DB, UT, TB, O>
+```
+
+Adds an ORDER BY clause to the query (MySQL, SQLite with `SQLITE_ENABLE_UPDATE_DELETE_LIMIT`).
+
+See `OrderByInterface` documentation for more examples.
+
+### $call
+
+```ts
+$call<T>(func: (qb: this) => T): T
+```
+
+Simply calls the provided function passing `this` as the only argument.
+
+**Example:**
+
+```ts
+import type { Compilable } from 'kysely'
+
+function log<T extends Compilable>(qb: T): T {
+  console.log(qb.compile())
+  return qb
+}
+
+db.updateTable('person')
+  .set({ first_name: 'John' })
+  .$call(log)
+  .execute()
+```
+
+### $if
+
+```ts
+$if<O2>(
+  condition: boolean,
+  func: (qb: this) => UpdateQueryBuilder<any, any, any, O2>
+): UpdateQueryBuilder<...>
+```
+
+Call `func(this)` if `condition` is true.
+
+Especially handy with optional `returning` or `returningAll` calls.
+
+**Example:**
+
+```ts
+async function updatePerson(id: number, updates: PersonUpdate, returnLastName: boolean) {
+  return await db
+    .updateTable('person')
+    .set(updates)
+    .where('id', '=', id)
+    .returning(['id', 'first_name'])
+    .$if(returnLastName, (qb) => qb.returning('last_name'))
+    .executeTakeFirstOrThrow()
+}
+
+// Return type: { id: number, first_name: string, last_name?: string }
+```
+
+### $castTo
+
+```ts
+$castTo<C>(): UpdateQueryBuilder<DB, UT, TB, C>
+```
+
+Change the output type of the query.
+
+### $narrowType
+
+```ts
+$narrowType<T>(): UpdateQueryBuilder<DB, UT, TB, NarrowPartial<O, T>>
+```
+
+Narrows (parts of) the output type of the query.
+
+### execute
+
+```ts
+async execute(): Promise<SimplifyResult<O>[]>
+```
+
+Executes the query and returns an array of rows.
+
+### executeTakeFirst
+
+```ts
+async executeTakeFirst(): Promise<SimplifySingleResult<O>>
+```
+
+Executes the query and returns the first result or `undefined`.
+
+### executeTakeFirstOrThrow
+
+```ts
+async executeTakeFirstOrThrow(
+  errorConstructor?: NoResultErrorConstructor | ((node: QueryNode) => Error)
+): Promise<SimplifyResult<O>>
+```
+
+Executes the query and returns the first result or throws.
+
+### compile
+
+```ts
+compile(): CompiledQuery<SimplifyResult<O>>
+```
+
+Compiles the query to SQL without executing it.
+
+### stream
+
+```ts
+async *stream(chunkSize?: number): AsyncIterableIterator<O>
+```
+
+Streams the query results.
+
+### explain
+
+```ts
+async explain<ER extends Record<string, any> = Record<string, any>>(
+  format?: ExplainFormat,
+  options?: Expression<any>
+): Promise<ER[]>
+```
+
+Executes an EXPLAIN query.

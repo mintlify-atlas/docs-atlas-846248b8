@@ -1,0 +1,160 @@
+---
+title: "Working with Data Types"
+description: "Understand TypeScript types vs runtime types and configure your database driver"
+---
+
+When working with data types in Kysely, it's crucial to understand the distinction between TypeScript types and runtime JavaScript types.
+
+## TypeScript types vs runtime types
+
+<CardGroup cols={2}>
+
+<Card title="TypeScript types" icon="code">
+Compile-time only. You define these for your tables and columns.
+</Card>
+
+<Card title="Runtime types" icon="play">
+Actual JavaScript values returned by the database driver.
+</Card>
+
+</CardGroup>
+
+### TypeScript types
+
+In Kysely, you only define TypeScript types for your tables and columns. Since TypeScript is entirely a compile-time concept, TypeScript types **cannot** affect runtime JavaScript types.
+
+<Warning>
+If you define your column to be a `string` in TypeScript but the database returns a `number`, the runtime type doesn't magically change to `string`. You'll see a `string` in the TypeScript code, but observe a number when you run the program.
+</Warning>
+
+<Info>
+It's up to **you** to select correct TypeScript types for your columns based on what the driver returns.
+</Info>
+
+### Runtime JavaScript types
+
+The database driver (such as `pg` or `mysql2`) decides the runtime JavaScript types that queries return. Kysely never touches the runtime types the driver returns.
+
+<Note>
+Kysely doesn't modify data returned by the driver in any way — it simply executes the query and returns whatever the driver returns. An exception is when you use a plugin like `CamelCasePlugin`, which changes column names.
+</Note>
+
+You need to:
+1. Read the underlying driver's documentation
+2. Figure out what the driver returns
+3. Align your TypeScript types to match
+
+## Configuring runtime JavaScript types
+
+Most drivers provide ways to change the returned types. Here's how to configure common scenarios:
+
+### PostgreSQL
+
+When using the `pg` driver, use the [pg-types](https://github.com/brianc/node-pg-types) package to configure types.
+
+#### Example: Return bigint as number
+
+By default, `pg` returns `bigint` and `numeric` types as strings. Here's how to configure it to return numbers:
+
+```ts
+import { Kysely, PostgresDialect } from 'kysely'
+import * as pg from 'pg'
+
+const int8TypeId = 20
+
+// Map int8 to number
+pg.types.setTypeParser(int8TypeId, (val) => {
+  return parseInt(val, 10)
+})
+
+export const db = new Kysely<Database>({
+  dialect: new PostgresDialect({
+    pool: new pg.Pool(config),
+  }),
+})
+```
+
+<Tip>
+See the [pg-types documentation](https://github.com/brianc/node-pg-types) to figure out the correct type ID for your data type.
+</Tip>
+
+### MySQL
+
+When using the `mysql2` driver, use the [typeCast](https://github.com/mysqljs/mysql?tab=readme-ov-file#custom-type-casting) pool property.
+
+#### Example: Map tinyint(1) to boolean
+
+```ts
+import { Kysely, MysqlDialect } from 'kysely'
+import { createPool } from 'mysql2'
+
+export const db = new Kysely<Database>({
+  dialect: new MysqlDialect({
+    pool: createPool({
+      ...config,
+      // Map tinyint(1) to boolean
+      typeCast(field, next) {
+        if (field.type === 'TINY' && field.length === 1) {
+          return field.string() === '1'
+        } else {
+          return next()
+        }
+      },
+    }),
+  }),
+})
+```
+
+## Type generators
+
+Third-party type generators can automatically generate TypeScript types from your database schema:
+
+<CardGroup cols={2}>
+
+<Card title="kysely-codegen" icon="code" href="https://github.com/RobinBlomberg/kysely-codegen">
+Generate types from your database schema
+</Card>
+
+<Card title="kanel-kysely" icon="file-code" href="https://kristiandupont.github.io/kanel/kanel-kysely.html">
+Another popular type generation tool
+</Card>
+
+</CardGroup>
+
+Find out more at the [Generating types](https://kysely.dev/docs/generating-types) documentation.
+
+<Warning>
+If these tools generate a type that doesn't match the runtime type you observe, refer to their documentation or open an issue in their GitHub repository. Kysely has no control over these libraries.
+</Warning>
+
+## Common type mismatches
+
+Here are some common scenarios where TypeScript types and runtime types might differ:
+
+| Database Type | Default Runtime Type | Common TypeScript Type | Notes |
+|---------------|---------------------|------------------------|-------|
+| PostgreSQL `bigint` | `string` | `number` | Configure with `pg-types` |
+| PostgreSQL `numeric` | `string` | `number` | Configure with `pg-types` |
+| MySQL `tinyint(1)` | `number` | `boolean` | Configure with `typeCast` |
+| PostgreSQL `json` | `object` | `T` | Automatically parsed |
+| SQLite `json` | `string` | `T` | Use `ParseJSONResultsPlugin` |
+
+## Best practices
+
+<Steps>
+<Step title="Test your types">
+Always verify that runtime types match your TypeScript definitions by logging actual query results.
+</Step>
+
+<Step title="Configure driver early">
+Set up type parsing in your database configuration file before creating queries.
+</Step>
+
+<Step title="Document custom types">
+Comment your database type configuration so other developers understand the mappings.
+</Step>
+
+<Step title="Use type generators">
+Consider using type generators to keep TypeScript types in sync with your database schema.
+</Step>
+</Steps>

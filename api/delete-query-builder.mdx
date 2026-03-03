@@ -1,0 +1,447 @@
+---
+title: 'DeleteQueryBuilder'
+description: 'Build and execute DELETE queries'
+---
+
+# DeleteQueryBuilder
+
+Builder for constructing DELETE queries with type-safe filtering.
+
+## Type Parameters
+
+- `DB` - The database schema type
+- `TB` - Union of table names available (for the DELETE and joins)
+- `O` - The output type (DeleteResult or custom with returning)
+
+## Methods
+
+### where
+
+```ts
+where<RE extends ReferenceExpression<DB, TB>>(
+  lhs: RE,
+  op: ComparisonOperatorExpression,
+  rhs: OperandValueExpressionOrList<DB, TB, RE>
+): DeleteQueryBuilder<DB, TB, O>
+
+where<E extends ExpressionOrFactory<DB, TB, SqlBool>>(
+  expression: E
+): DeleteQueryBuilder<DB, TB, O>
+```
+
+Adds a WHERE clause to the query. Multiple where calls are combined with AND.
+
+See `WhereInterface` documentation for more examples.
+
+**Example:**
+
+```ts
+await db
+  .deleteFrom('person')
+  .where('id', '=', 1)
+  .execute()
+```
+
+### whereRef
+
+```ts
+whereRef<LRE extends ReferenceExpression<DB, TB>, RRE extends ReferenceExpression<DB, TB>>(
+  lhs: LRE,
+  op: ComparisonOperatorExpression,
+  rhs: RRE
+): DeleteQueryBuilder<DB, TB, O>
+```
+
+Adds a WHERE clause that compares two column references.
+
+### using
+
+```ts
+using<TE extends TableExpression<DB, keyof DB>>(
+  table: TE
+): DeleteQueryBuilder<From<DB, TE>, FromTables<DB, TB, TE>, O>
+
+using<TE extends TableExpression<DB, keyof DB>>(
+  tables: TE[]
+): DeleteQueryBuilder<From<DB, TE>, FromTables<DB, TB, TE>, O>
+```
+
+Adds a USING clause to the query.
+
+This clause allows adding additional tables to the query for filtering/returning. Usually a non-standard syntactic-sugar alternative to a WHERE with a sub-query.
+
+**Examples:**
+
+PostgreSQL:
+
+```ts
+await db
+  .deleteFrom('pet')
+  .using('person')
+  .whereRef('pet.owner_id', '=', 'person.id')
+  .where('person.first_name', '=', 'Bob')
+  .executeTakeFirstOrThrow()
+```
+
+MySQL with joins:
+
+```ts
+await db
+  .deleteFrom('pet')
+  .using('pet')
+  .leftJoin('person', 'person.id', 'pet.owner_id')
+  .where('person.first_name', '=', 'Bob')
+  .executeTakeFirstOrThrow()
+```
+
+Multiple tables:
+
+```ts
+await db
+  .deleteFrom('toy')
+  .using(['pet', 'person'])
+  .whereRef('toy.pet_id', '=', 'pet.id')
+  .whereRef('pet.owner_id', '=', 'person.id')
+  .where('person.first_name', '=', 'Bob')
+  .returning('pet.name')
+  .executeTakeFirstOrThrow()
+```
+
+### innerJoin
+
+```ts
+innerJoin<TE extends TableExpression<DB, TB>>(
+  table: TE,
+  k1: JoinReferenceExpression<DB, TB, TE>,
+  k2: JoinReferenceExpression<DB, TB, TE>
+): DeleteQueryBuilderWithInnerJoin<DB, TB, O, TE>
+
+innerJoin<TE extends TableExpression<DB, TB>>(
+  table: TE,
+  callback: JoinCallbackExpression<DB, TB, TE>
+): DeleteQueryBuilderWithInnerJoin<DB, TB, O, TE>
+```
+
+Joins another table using an inner join.
+
+See `SelectQueryBuilder.innerJoin` for examples.
+
+### leftJoin
+
+```ts
+leftJoin<TE extends TableExpression<DB, TB>>(
+  table: TE,
+  ...
+): DeleteQueryBuilderWithLeftJoin<DB, TB, O, TE>
+```
+
+Just like `innerJoin` but adds a left join instead.
+
+### rightJoin
+
+```ts
+rightJoin<TE extends TableExpression<DB, TB>>(
+  table: TE,
+  ...
+): DeleteQueryBuilderWithRightJoin<DB, TB, O, TE>
+```
+
+Just like `innerJoin` but adds a right join instead.
+
+### fullJoin
+
+```ts
+fullJoin<TE extends TableExpression<DB, TB>>(
+  table: TE,
+  ...
+): DeleteQueryBuilderWithFullJoin<DB, TB, O, TE>
+```
+
+Just like `innerJoin` but adds a full join instead.
+
+### returning
+
+```ts
+returning<SE extends SelectExpression<DB, TB>>(
+  selection: SE
+): DeleteQueryBuilder<DB, TB, ReturningRow<DB, TB, O, SE>>
+
+returning<SE extends SelectExpression<DB, TB>>(
+  selections: ReadonlyArray<SE>
+): DeleteQueryBuilder<DB, TB, ReturningRow<DB, TB, O, SE>>
+
+returning<CB extends SelectCallback<DB, TB>>(
+  callback: CB
+): DeleteQueryBuilder<DB, TB, ReturningCallbackRow<DB, TB, O, CB>>
+```
+
+Adds a RETURNING clause to the query (supported on PostgreSQL, SQLite, MS SQL Server).
+
+**Example:**
+
+```ts
+const result = await db
+  .deleteFrom('person')
+  .where('id', '=', 1)
+  .returning(['id', 'first_name'])
+  .executeTakeFirstOrThrow()
+```
+
+### returningAll
+
+```ts
+returningAll(): DeleteQueryBuilder<DB, TB, ReturningAllRow<DB, TB, O>>
+
+returningAll<T extends TB>(
+  table: T
+): DeleteQueryBuilder<DB, TB, ReturningAllRow<DB, T, O>>
+
+returningAll<T extends TB>(
+  tables: ReadonlyArray<T>
+): DeleteQueryBuilder<DB, TB, ReturningAllRow<DB, T, O>>
+```
+
+Adds a `returning *` or `returning table.*` clause to the query.
+
+**Examples:**
+
+Return all columns:
+
+```ts
+const pets = await db
+  .deleteFrom('pet')
+  .returningAll()
+  .execute()
+```
+
+Return all columns from specific table:
+
+```ts
+const result = await db
+  .deleteFrom('toy')
+  .using(['pet', 'person'])
+  .whereRef('toy.pet_id', '=', 'pet.id')
+  .whereRef('pet.owner_id', '=', 'person.id')
+  .where('person.first_name', '=', 'Itachi')
+  .returningAll('pet')
+  .execute()
+```
+
+### output
+
+```ts
+output<OE extends OutputExpression<DB, TB, 'deleted'>>(
+  selection: OE
+): DeleteQueryBuilder<...>
+
+output<OE extends OutputExpression<DB, TB, 'deleted'>>(
+  selections: readonly OE[]
+): DeleteQueryBuilder<...>
+```
+
+Adds an OUTPUT clause (MS SQL Server).
+
+### outputAll
+
+```ts
+outputAll(
+  table: 'deleted'
+): DeleteQueryBuilder<DB, TB, ReturningAllRow<DB, TB, O>>
+```
+
+Adds an `output deleted.*` clause (MS SQL Server).
+
+### top
+
+```ts
+top(
+  expression: number | bigint,
+  modifiers?: 'percent'
+): DeleteQueryBuilder<DB, TB, O>
+```
+
+Changes a `delete from` query to a `delete top from` query (MS SQL Server).
+
+**Example:**
+
+```ts
+await db
+  .deleteFrom('person')
+  .top(5)
+  .where('age', '>', 18)
+  .executeTakeFirstOrThrow()
+```
+
+### limit
+
+```ts
+limit(
+  limit: ValueExpression<DB, TB, number>
+): DeleteQueryBuilder<DB, TB, O>
+```
+
+Adds a LIMIT clause to the query (MySQL, SQLite with `SQLITE_ENABLE_UPDATE_DELETE_LIMIT`).
+
+**Example:**
+
+```ts
+await db
+  .deleteFrom('pet')
+  .orderBy('created_at')
+  .limit(5)
+  .execute()
+```
+
+### orderBy
+
+```ts
+orderBy<OE extends OrderByExpression<DB, TB, {}>>(
+  expr: OE,
+  modifiers?: OrderByModifiers
+): DeleteQueryBuilder<DB, TB, O>
+```
+
+Adds an ORDER BY clause to the query (MySQL, SQLite with `SQLITE_ENABLE_UPDATE_DELETE_LIMIT`).
+
+See `OrderByInterface` documentation for more examples.
+
+### modifyEnd
+
+```ts
+modifyEnd(
+  modifier: Expression<any>
+): DeleteQueryBuilder<DB, TB, O>
+```
+
+Adds arbitrary SQL to the end of the query.
+
+**Example:**
+
+```ts
+import { sql } from 'kysely'
+
+await db.deleteFrom('person')
+  .where('first_name', '=', 'John')
+  .modifyEnd(sql`-- This is a comment`)
+  .execute()
+```
+
+### $call
+
+```ts
+$call<T>(func: (qb: this) => T): T
+```
+
+Simply calls the provided function passing `this` as the only argument.
+
+**Example:**
+
+```ts
+import type { Compilable } from 'kysely'
+
+function log<T extends Compilable>(qb: T): T {
+  console.log(qb.compile())
+  return qb
+}
+
+await db.deleteFrom('person')
+  .$call(log)
+  .execute()
+```
+
+### $if
+
+```ts
+$if<O2>(
+  condition: boolean,
+  func: (qb: this) => DeleteQueryBuilder<any, any, O2>
+): DeleteQueryBuilder<...>
+```
+
+Call `func(this)` if `condition` is true.
+
+Especially handy with optional `returning` or `returningAll` calls.
+
+**Example:**
+
+```ts
+async function deletePerson(id: number, returnLastName: boolean) {
+  return await db
+    .deleteFrom('person')
+    .where('id', '=', id)
+    .returning(['id', 'first_name'])
+    .$if(returnLastName, (qb) => qb.returning('last_name'))
+    .executeTakeFirstOrThrow()
+}
+
+// Return type: { id: number, first_name: string, last_name?: string }
+```
+
+### $castTo
+
+```ts
+$castTo<C>(): DeleteQueryBuilder<DB, TB, C>
+```
+
+Change the output type of the query.
+
+### $narrowType
+
+```ts
+$narrowType<T>(): DeleteQueryBuilder<DB, TB, NarrowPartial<O, T>>
+```
+
+Narrows (parts of) the output type of the query.
+
+### execute
+
+```ts
+async execute(): Promise<SimplifyResult<O>[]>
+```
+
+Executes the query and returns an array of rows.
+
+### executeTakeFirst
+
+```ts
+async executeTakeFirst(): Promise<SimplifySingleResult<O>>
+```
+
+Executes the query and returns the first result or `undefined`.
+
+### executeTakeFirstOrThrow
+
+```ts
+async executeTakeFirstOrThrow(
+  errorConstructor?: NoResultErrorConstructor | ((node: QueryNode) => Error)
+): Promise<SimplifyResult<O>>
+```
+
+Executes the query and returns the first result or throws.
+
+### compile
+
+```ts
+compile(): CompiledQuery<SimplifyResult<O>>
+```
+
+Compiles the query to SQL without executing it.
+
+### stream
+
+```ts
+async *stream(chunkSize?: number): AsyncIterableIterator<O>
+```
+
+Streams the query results.
+
+### explain
+
+```ts
+async explain<ER extends Record<string, any> = Record<string, any>>(
+  format?: ExplainFormat,
+  options?: Expression<any>
+): Promise<ER[]>
+```
+
+Executes an EXPLAIN query.

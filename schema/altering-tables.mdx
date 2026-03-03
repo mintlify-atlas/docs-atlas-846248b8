@@ -1,0 +1,357 @@
+---
+title: Altering Tables
+description: Modify existing tables by adding, dropping, or altering columns and constraints
+---
+
+Kysely's `AlterTableBuilder` allows you to modify existing database tables. Access it through `db.schema.alterTable()`.
+
+## Renaming Tables
+
+Rename a table:
+
+```typescript
+await db.schema
+  .alterTable('person')
+  .renameTo('user')
+  .execute()
+```
+
+### Moving to Different Schema
+
+On databases that support schemas (PostgreSQL, MSSQL):
+
+```typescript
+await db.schema
+  .alterTable('person')
+  .setSchema('public')
+  .execute()
+```
+
+## Column Operations
+
+### Adding Columns
+
+Add new columns with constraints:
+
+```typescript
+await db.schema
+  .alterTable('person')
+  .addColumn('email', 'varchar(255)', (col) => col.unique())
+  .execute()
+```
+
+Multiple columns in one statement:
+
+```typescript
+await db.schema
+  .alterTable('person')
+  .addColumn('phone', 'varchar(20)')
+  .addColumn('address', 'text')
+  .addColumn('created_at', 'timestamp', (col) =>
+    col.defaultTo(sql`CURRENT_TIMESTAMP`)
+  )
+  .execute()
+```
+
+### Dropping Columns
+
+```typescript
+await db.schema
+  .alterTable('person')
+  .dropColumn('phone')
+  .execute()
+```
+
+Drop multiple columns:
+
+```typescript
+await db.schema
+  .alterTable('person')
+  .dropColumn('phone')
+  .dropColumn('fax')
+  .execute()
+```
+
+### Renaming Columns
+
+```typescript
+await db.schema
+  .alterTable('person')
+  .renameColumn('first_name', 'given_name')
+  .execute()
+```
+
+### Modifying Columns
+
+#### Using alterColumn
+
+Change column properties (PostgreSQL, SQLite):
+
+```typescript
+// Change data type
+await db.schema
+  .alterTable('person')
+  .alterColumn('age', (col) => col.setDataType('varchar(10)'))
+  .execute()
+
+// Set NOT NULL
+await db.schema
+  .alterTable('person')
+  .alterColumn('email', (col) => col.setNotNull())
+  .execute()
+
+// Drop NOT NULL
+await db.schema
+  .alterTable('person')
+  .alterColumn('email', (col) => col.dropNotNull())
+  .execute()
+
+// Set default value
+await db.schema
+  .alterTable('person')
+  .alterColumn('status', (col) => col.setDefault('active'))
+  .execute()
+
+// Drop default value
+await db.schema
+  .alterTable('person')
+  .alterColumn('status', (col) => col.dropDefault())
+  .execute()
+```
+
+<Warning>
+The `alterColumn` method only allows **one alteration per call**. To make multiple changes, execute separate statements.
+</Warning>
+
+#### Using modifyColumn
+
+For MySQL and Oracle, use `modifyColumn` instead:
+
+```typescript
+await db.schema
+  .alterTable('person')
+  .modifyColumn('age', 'integer', (col) => col.notNull().defaultTo(0))
+  .execute()
+```
+
+## Constraint Operations
+
+### Adding Constraints
+
+#### Primary Key Constraints
+
+```typescript
+await db.schema
+  .alterTable('user_role')
+  .addPrimaryKeyConstraint('user_role_pk', ['user_id', 'role_id'])
+  .execute()
+```
+
+#### Unique Constraints
+
+```typescript
+await db.schema
+  .alterTable('person')
+  .addUniqueConstraint('person_email_unique', ['email'])
+  .execute()
+```
+
+On PostgreSQL, use `nulls not distinct`:
+
+```typescript
+await db.schema
+  .alterTable('person')
+  .addUniqueConstraint(
+    'person_email_unique',
+    ['email'],
+    (cb) => cb.nullsNotDistinct()
+  )
+  .execute()
+```
+
+#### Foreign Key Constraints
+
+```typescript
+await db.schema
+  .alterTable('pet')
+  .addForeignKeyConstraint(
+    'pet_owner_fk',
+    ['owner_id'],
+    'person',
+    ['id'],
+    (cb) => cb.onDelete('cascade')
+  )
+  .execute()
+```
+
+Composite foreign keys:
+
+```typescript
+await db.schema
+  .alterTable('order_item')
+  .addForeignKeyConstraint(
+    'order_item_order_fk',
+    ['order_id', 'product_id'],
+    'order',
+    ['id', 'product_id'],
+    (cb) => cb.onDelete('cascade').onUpdate('restrict')
+  )
+  .execute()
+```
+
+#### Check Constraints
+
+```typescript
+import { sql } from 'kysely'
+
+await db.schema
+  .alterTable('product')
+  .addCheckConstraint('price_positive', sql`price > 0`)
+  .execute()
+```
+
+### Dropping Constraints
+
+Drop any constraint by name:
+
+```typescript
+await db.schema
+  .alterTable('person')
+  .dropConstraint('person_email_unique')
+  .execute()
+```
+
+On some databases, specify the constraint type:
+
+```typescript
+await db.schema
+  .alterTable('person')
+  .dropConstraint('person_email_unique')
+  .ifExists()
+  .execute()
+```
+
+### Renaming Constraints
+
+```typescript
+await db.schema
+  .alterTable('person')
+  .renameConstraint('old_constraint_name', 'new_constraint_name')
+  .execute()
+```
+
+## Index Operations
+
+### Adding Indexes
+
+```typescript
+await db.schema
+  .alterTable('person')
+  .addIndex('person_email_index')
+  .column('email')
+  .execute()
+```
+
+Unique indexes:
+
+```typescript
+await db.schema
+  .alterTable('person')
+  .addIndex('person_email_index')
+  .column('email')
+  .unique()
+  .execute()
+```
+
+Multi-column indexes:
+
+```typescript
+await db.schema
+  .alterTable('person')
+  .addIndex('person_name_index')
+  .columns(['first_name', 'last_name'])
+  .execute()
+```
+
+### Dropping Indexes
+
+```typescript
+await db.schema
+  .alterTable('person')
+  .dropIndex('person_email_index')
+  .execute()
+```
+
+## Chaining Multiple Alterations
+
+Some operations can be chained in a single statement:
+
+```typescript
+await db.schema
+  .alterTable('person')
+  .addColumn('email', 'varchar(255)')
+  .addColumn('phone', 'varchar(20)')
+  .dropColumn('fax')
+  .execute()
+```
+
+<Warning>
+Not all databases support multiple alterations in one statement. If you encounter errors, split them into separate `alterTable` calls.
+</Warning>
+
+## Database-Specific Considerations
+
+### PostgreSQL
+
+- Supports `alterColumn` for modifying column properties
+- Allows `IF NOT EXISTS` on add column operations
+- Supports `nulls not distinct` on unique constraints
+
+```typescript
+await db.schema
+  .alterTable('person')
+  .addColumn('email', 'varchar(255)', (col) => col.ifNotExists())
+  .execute()
+```
+
+### MySQL
+
+- Use `modifyColumn` instead of `alterColumn`
+- Supports `FIRST` and `AFTER` for column positioning (use with modifiers)
+
+### SQLite
+
+SQLite has limited `ALTER TABLE` support:
+- Can add columns
+- Can rename tables and columns
+- Cannot drop columns (in older versions)
+- Cannot modify column types directly
+
+For unsupported operations, you'll need to:
+1. Create a new table with the desired schema
+2. Copy data from the old table
+3. Drop the old table
+4. Rename the new table
+
+## Reusable Patterns
+
+Create reusable alteration functions:
+
+```typescript
+import { sql, type AlterTableBuilder } from 'kysely'
+
+const addTimestamps = (builder: AlterTableBuilder) => {
+  return builder
+    .addColumn('created_at', 'timestamp', (col) =>
+      col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`)
+    )
+    .addColumn('updated_at', 'timestamp', (col) =>
+      col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`)
+    )
+}
+
+await db.schema
+  .alterTable('person')
+  .$call(addTimestamps)
+  .execute()
+```

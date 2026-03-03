@@ -1,0 +1,381 @@
+---
+title: 'Kysely'
+description: 'Main Kysely class for database operations'
+---
+
+# Kysely
+
+The main Kysely class for interacting with your database.
+
+You should create one instance of `Kysely` per database using the constructor. Each `Kysely` instance maintains its own connection pool.
+
+## Constructor
+
+<ParamField path="config" type="KyselyConfig" required>
+  Configuration object for Kysely instance
+  
+  <Expandable title="properties">
+    <ParamField path="dialect" type="Dialect" required>
+      The database dialect (e.g., PostgreSQL, MySQL, SQLite)
+    </ParamField>
+    
+    <ParamField path="plugins" type="KyselyPlugin[]">
+      Optional array of plugins to install
+    </ParamField>
+    
+    <ParamField path="log" type="LogConfig">
+      Logging configuration. Can be an array of log levels (`['query', 'error']`) or a custom logger function
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### Example
+
+```ts
+import * as Sqlite from 'better-sqlite3'
+import { type Generated, Kysely, SqliteDialect } from 'kysely'
+
+interface Database {
+  person: {
+    id: Generated<number>
+    first_name: string
+    last_name: string | null
+  }
+}
+
+const db = new Kysely<Database>({
+  dialect: new SqliteDialect({
+    database: new Sqlite(':memory:'),
+  })
+})
+```
+
+## Properties
+
+### schema
+
+```ts
+get schema(): SchemaModule
+```
+
+Returns the `SchemaModule` for building database schema.
+
+**Example:**
+
+```ts
+await db.schema
+  .createTable('person')
+  .addColumn('id', 'integer', (col) => col.primaryKey())
+  .addColumn('first_name', 'varchar(255)', (col) => col.notNull())
+  .execute()
+```
+
+### dynamic
+
+```ts
+get dynamic(): DynamicModule<DB>
+```
+
+Returns the `DynamicModule` for bypassing strict typing and passing dynamic values.
+
+**Example:**
+
+```ts
+const { ref } = db.dynamic
+const columnName = 'first_name'
+
+await db.selectFrom('person')
+  .select(ref(columnName))
+  .execute()
+```
+
+### introspection
+
+```ts
+get introspection(): DatabaseIntrospector
+```
+
+Returns a database introspector for examining database structure.
+
+### fn
+
+```ts
+get fn(): FunctionModule<DB, keyof DB>
+```
+
+Returns a `FunctionModule` for building SQL function calls.
+
+**Example:**
+
+```ts
+const { count } = db.fn
+
+await db.selectFrom('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  .select([
+    'id',
+    count('pet.id').as('person_count'),
+  ])
+  .groupBy('person.id')
+  .having(count('pet.id'), '>', 10)
+  .execute()
+```
+
+### isTransaction
+
+```ts
+get isTransaction(): boolean
+```
+
+Returns `true` if this `Kysely` instance is a transaction. You can also use `db instanceof Transaction`.
+
+## Methods
+
+### selectFrom
+
+```ts
+selectFrom<TE extends keyof DB & string>(from: TE): SelectQueryBuilder<DB, TE, {}>
+selectFrom<TE extends keyof DB & string>(from: TE[]): SelectQueryBuilder<DB, TE, {}>
+```
+
+Creates a select query builder for the given table(s).
+
+Inherited from `QueryCreator`. See [SelectQueryBuilder](/api/select-query-builder) for available methods.
+
+### insertInto
+
+```ts
+insertInto<T extends keyof DB & string>(table: T): InsertQueryBuilder<DB, T, InsertResult>
+```
+
+Creates an insert query builder for the given table.
+
+See [InsertQueryBuilder](/api/insert-query-builder) for available methods.
+
+### updateTable
+
+```ts
+updateTable<TR extends keyof DB & string>(table: TR): UpdateQueryBuilder<DB, TR, TR, UpdateResult>
+updateTable<TR extends keyof DB & string>(table: TR[]): UpdateQueryBuilder<DB, TR, TR, UpdateResult>
+```
+
+Creates an update query builder for the given table(s).
+
+See [UpdateQueryBuilder](/api/update-query-builder) for available methods.
+
+### deleteFrom
+
+```ts
+deleteFrom<TR extends keyof DB & string>(from: TR): DeleteQueryBuilder<DB, TR, DeleteResult>
+deleteFrom<TR extends keyof DB & string>(from: TR[]): DeleteQueryBuilder<DB, TR, DeleteResult>
+```
+
+Creates a delete query builder for the given table(s).
+
+See [DeleteQueryBuilder](/api/delete-query-builder) for available methods.
+
+### transaction
+
+```ts
+transaction(): TransactionBuilder<DB>
+```
+
+Creates a `TransactionBuilder` for running queries inside a transaction.
+
+The callback function passed to `execute()` gets the transaction object as its only argument. If the function throws, the transaction is rolled back. Otherwise it's committed.
+
+**Example:**
+
+```ts
+const catto = await db.transaction().execute(async (trx) => {
+  const jennifer = await trx.insertInto('person')
+    .values({
+      first_name: 'Jennifer',
+      last_name: 'Aniston',
+      age: 40,
+    })
+    .returning('id')
+    .executeTakeFirstOrThrow()
+
+  return await trx.insertInto('pet')
+    .values({
+      owner_id: jennifer.id,
+      name: 'Catto',
+      species: 'cat',
+      is_favorite: false,
+    })
+    .returningAll()
+    .executeTakeFirst()
+})
+```
+
+**Setting isolation level:**
+
+```ts
+await db
+  .transaction()
+  .setIsolationLevel('serializable')
+  .execute(async (trx) => {
+    await doStuff(trx)
+  })
+```
+
+### startTransaction
+
+```ts
+startTransaction(): ControlledTransactionBuilder<DB>
+```
+
+Creates a `ControlledTransactionBuilder` for manually controlled transactions.
+
+Returns a `ControlledTransaction` that allows manual commit/rollback and savepoint operations.
+
+**Example:**
+
+```ts
+const trx = await db.startTransaction().execute()
+
+try {
+  const jennifer = await trx.insertInto('person')
+    .values({
+      first_name: 'Jennifer',
+      last_name: 'Aniston',
+      age: 40,
+    })
+    .returning('id')
+    .executeTakeFirstOrThrow()
+
+  const catto = await trx.insertInto('pet')
+    .values({
+      owner_id: jennifer.id,
+      name: 'Catto',
+      species: 'cat',
+    })
+    .returningAll()
+    .executeTakeFirstOrThrow()
+
+  await trx.commit().execute()
+} catch (error) {
+  await trx.rollback().execute()
+}
+```
+
+### connection
+
+```ts
+connection(): ConnectionBuilder<DB>
+```
+
+Provides a kysely instance bound to a single database connection.
+
+**Example:**
+
+```ts
+await db
+  .connection()
+  .execute(async (db) => {
+    // All queries executed through `db` use the same connection
+    await doStuff(db)
+  })
+```
+
+### case
+
+```ts
+case(): CaseBuilder<DB, keyof DB>
+case<V>(value: Expression<V>): CaseBuilder<DB, keyof DB, V>
+```
+
+Creates a `case` statement/operator.
+
+See `ExpressionBuilder.case` for more information.
+
+### withPlugin
+
+```ts
+withPlugin(plugin: KyselyPlugin): Kysely<DB>
+```
+
+Returns a copy of this Kysely instance with the given plugin installed.
+
+### withoutPlugins
+
+```ts
+withoutPlugins(): Kysely<DB>
+```
+
+Returns a copy of this Kysely instance without any plugins.
+
+### withSchema
+
+```ts
+withSchema(schema: string): Kysely<DB>
+```
+
+Returns a copy of this Kysely instance with a schema prefix for all queries.
+
+### withTables
+
+```ts
+withTables<T extends Record<string, Record<string, any>>>(): Kysely<DB & T>
+```
+
+Returns a copy of this Kysely instance with tables added to its database type.
+
+This method only modifies the types and doesn't affect executed queries.
+
+**Example:**
+
+```ts
+await db.schema
+  .createTable('temp_table')
+  .temporary()
+  .addColumn('some_column', 'integer')
+  .execute()
+
+const tempDb = db.withTables<{
+  temp_table: {
+    some_column: number
+  }
+}>()
+
+await tempDb
+  .insertInto('temp_table')
+  .values({ some_column: 100 })
+  .execute()
+```
+
+### executeQuery
+
+```ts
+executeQuery<R>(
+  query: CompiledQuery<R> | Compilable<R>,
+  queryId?: QueryId
+): Promise<QueryResult<R>>
+```
+
+Executes a given compiled query or query builder.
+
+See the [splitting build, compile and execute recipe](https://github.com/kysely-org/kysely/blob/master/site/docs/recipes/0004-splitting-query-building-and-execution.md) for more information.
+
+### destroy
+
+```ts
+async destroy(): Promise<void>
+```
+
+Releases all resources and disconnects from the database.
+
+You need to call this when you are done using the `Kysely` instance.
+
+**Example:**
+
+```ts
+const db = new Kysely<Database>({ dialect })
+
+// Use the database
+await db.selectFrom('person').selectAll().execute()
+
+// Clean up
+await db.destroy()
+```

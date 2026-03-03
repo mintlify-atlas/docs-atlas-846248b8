@@ -1,0 +1,322 @@
+---
+title: Insert Queries
+description: Learn how to insert data into your database using Kysely's InsertQueryBuilder with type-safe insert statements.
+---
+
+The `InsertQueryBuilder` is used to build and execute INSERT queries in Kysely. It provides a fluent API for inserting single or multiple rows with type safety.
+
+## Basic Usage
+
+### Insert a Single Row
+
+Insert a single row into a table:
+
+```typescript
+const result = await db
+  .insertInto('person')
+  .values({
+    first_name: 'Jennifer',
+    last_name: 'Aniston',
+    age: 40
+  })
+  .executeTakeFirst()
+
+// `insertId` is only available on dialects that
+// automatically return the id of the inserted row
+// such as MySQL and SQLite.
+console.log(result.insertId)
+```
+
+The generated SQL (MySQL):
+
+```sql
+insert into `person` (`first_name`, `last_name`, `age`) values (?, ?, ?)
+```
+
+### Insert Multiple Rows
+
+On dialects that support it (for example PostgreSQL) you can insert multiple rows by providing an array:
+
+```typescript
+await db
+  .insertInto('person')
+  .values([{
+    first_name: 'Jennifer',
+    last_name: 'Aniston',
+    age: 40,
+  }, {
+    first_name: 'Arnold',
+    last_name: 'Schwarzenegger',
+    age: 70,
+  }])
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+insert into "person" ("first_name", "last_name", "age") values (($1, $2, $3), ($4, $5, $6))
+```
+
+## Returning Data
+
+On supported dialects like PostgreSQL you need to chain `returning` to the query to get the inserted row's columns:
+
+```typescript
+const result = await db
+  .insertInto('person')
+  .values({
+    first_name: 'Jennifer',
+    last_name: 'Aniston',
+    age: 40,
+  })
+  .returning(['id', 'first_name as name'])
+  .executeTakeFirstOrThrow()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+insert into "person" ("first_name", "last_name", "age") values ($1, $2, $3) returning "id", "first_name" as "name"
+```
+
+You can return all columns:
+
+```typescript
+const result = await db
+  .insertInto('person')
+  .values({ first_name: 'Jennifer', last_name: 'Aniston', age: 40 })
+  .returningAll()
+  .executeTakeFirstOrThrow()
+```
+
+## Complex Values
+
+Values can be arbitrary expressions including subqueries and raw SQL:
+
+```typescript
+import { sql } from 'kysely'
+
+const ani = "Ani"
+const ston = "ston"
+
+const result = await db
+  .insertInto('person')
+  .values(({ ref, selectFrom, fn }) => ({
+    first_name: 'Jennifer',
+    last_name: sql<string>`concat(${ani}, ${ston})`,
+    middle_name: ref('first_name'),
+    age: selectFrom('person')
+      .select(fn.avg<number>('age').as('avg_age')),
+  }))
+  .executeTakeFirst()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+insert into "person" (
+  "first_name",
+  "last_name",
+  "middle_name",
+  "age"
+)
+values (
+  $1,
+  concat($2, $3),
+  "first_name",
+  (select avg("age") as "avg_age" from "person")
+)
+```
+
+## Insert from Subquery
+
+You can create an `INSERT INTO SELECT FROM` query using the `expression` method:
+
+```typescript
+const result = await db.insertInto('person')
+  .columns(['first_name', 'last_name', 'age'])
+  .expression((eb) => eb
+    .selectFrom('pet')
+    .select((eb) => [
+      'pet.name',
+      eb.val('Petson').as('last_name'),
+      eb.lit(7).as('age'),
+    ])
+  )
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+insert into "person" ("first_name", "last_name", "age")
+select "pet"."name", $1 as "last_name", 7 as "age" from "pet"
+```
+
+## Default Values
+
+Insert default values:
+
+```typescript
+await db.insertInto('person')
+  .defaultValues()
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+insert into "person" default values
+```
+
+## Conflict Handling
+
+### On Conflict (PostgreSQL)
+
+Handle conflicts using `onConflict`:
+
+```typescript
+// Do nothing on conflict
+await db
+  .insertInto('person')
+  .values({
+    first_name: 'Jennifer',
+    last_name: 'Aniston',
+    age: 40,
+  })
+  .onConflict((oc) => oc
+    .column('email')
+    .doNothing()
+  )
+  .execute()
+
+// Update on conflict
+await db
+  .insertInto('person')
+  .values({
+    first_name: 'Jennifer',
+    last_name: 'Aniston',
+    age: 40,
+  })
+  .onConflict((oc) => oc
+    .column('email')
+    .doUpdateSet({
+      first_name: 'Jennifer',
+      last_name: 'Aniston',
+    })
+  )
+  .execute()
+```
+
+### Insert Ignore (MySQL)
+
+Use `ignore()` to ignore duplicate key errors:
+
+```typescript
+await db.insertInto('person')
+  .ignore()
+  .values({
+    first_name: 'John',
+    last_name: 'Doe',
+    gender: 'female',
+  })
+  .execute()
+```
+
+The generated SQL (MySQL):
+
+```sql
+insert ignore into `person` (`first_name`, `last_name`, `gender`) values (?, ?, ?)
+```
+
+### On Duplicate Key Update (MySQL)
+
+Handle duplicates with update:
+
+```typescript
+await db.insertInto('person')
+  .values({
+    first_name: 'Jennifer',
+    last_name: 'Aniston',
+    age: 40,
+  })
+  .onDuplicateKeyUpdate({
+    age: 41,
+  })
+  .execute()
+```
+
+## SQLite Conflict Actions
+
+SQLite supports various conflict actions:
+
+```typescript
+// Insert or ignore
+await db.insertInto('person')
+  .orIgnore()
+  .values({ first_name: 'John', last_name: 'Doe' })
+  .execute()
+
+// Insert or replace
+await db.insertInto('person')
+  .orReplace()
+  .values({ first_name: 'John', last_name: 'Doe' })
+  .execute()
+
+// Insert or abort
+await db.insertInto('person')
+  .orAbort()
+  .values({ first_name: 'John', last_name: 'Doe' })
+  .execute()
+
+// Insert or fail
+await db.insertInto('person')
+  .orFail()
+  .values({ first_name: 'John', last_name: 'Doe' })
+  .execute()
+
+// Insert or rollback
+await db.insertInto('person')
+  .orRollback()
+  .values({ first_name: 'John', last_name: 'Doe' })
+  .execute()
+```
+
+## API Reference
+
+### Main Methods
+
+- `insertInto(table)` - Specify the table to insert into
+- `values(values)` - Set the values to insert
+- `columns(columns)` - Set the columns (used with `expression`)
+- `expression(expression)` - Insert from a subquery or expression
+- `defaultValues()` - Insert default values
+- `returning(columns)` - Return columns from inserted rows (PostgreSQL, SQLite)
+- `returningAll()` - Return all columns from inserted rows
+- `onConflict(callback)` - Handle conflicts (PostgreSQL)
+- `onDuplicateKeyUpdate(updates)` - Update on duplicate key (MySQL)
+- `ignore()` - Insert ignore (MySQL)
+- `orIgnore()`, `orReplace()`, `orAbort()`, `orFail()`, `orRollback()` - SQLite conflict actions
+- `modifyEnd(modifier)` - Add custom SQL to the end
+- `execute()` - Execute the query
+- `executeTakeFirst()` - Execute and return first result
+- `executeTakeFirstOrThrow()` - Execute and return first result or throw
+
+### Result Object
+
+The return value is an instance of `InsertResult`:
+
+```typescript
+interface InsertResult {
+  /**
+   * The auto incremented primary key (MySQL, SQLite)
+   */
+  insertId?: bigint | undefined
+
+  /**
+   * The number of rows inserted
+   */
+  numInsertedRows?: bigint | undefined
+}
+```

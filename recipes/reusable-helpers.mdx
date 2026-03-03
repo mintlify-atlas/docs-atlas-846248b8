@@ -1,0 +1,285 @@
+---
+title: "Creating Reusable Helper Functions"
+description: "Build composable, type-safe helper functions for common SQL operations"
+---
+
+<Info>
+[View this recipe in the playground](https://kyse.link/qm67s)
+</Info>
+
+Kysely doesn't have built-in functions for every SQL operation, but it provides the tools to create your own composable, type-safe helpers.
+
+## The problem
+
+Let's say you want to write this query:
+
+```sql
+SELECT id, first_name
+FROM person
+WHERE upper(last_name) = $1
+```
+
+Kysely doesn't have a built-in `upper` function. You have several options:
+
+```ts
+const lastName = 'STALLONE'
+
+const persons = await db
+  .selectFrom('person')
+  .select(['id', 'first_name'])
+  // 1. `sql` template tag - least type-safe
+  // No type-checking for column names, plugins won't affect it
+  .where(
+    sql<string>`upper(last_name)`, '=', lastName
+  )
+  // 2. `sql` with `ref` - better type safety
+  // Column names are type-checked against query context
+  .where(({ eb, ref }) => eb(
+    sql<string>`upper(${ref('last_name')})`, '=', lastName
+  ))
+  // 3. `fn` function - best option
+  // Avoids syntax errors, uses refs as first-class arguments
+  .where(({ eb, fn }) => eb(
+    fn<string>('upper', ['last_name']), '=', lastName
+  ))
+  .execute()
+```
+
+Each option has tradeoffs in readability and type safety.
+
+## Creating helper functions
+
+Fortunately, Kysely allows you to create reusable, type-safe helpers:
+
+```ts
+import { Expression, sql } from 'kysely'
+
+function upper(expr: Expression<string>) {
+  return sql<string>`upper(${expr})`
+}
+
+function lower(expr: Expression<string>) {
+  return sql<string>`lower(${expr})`
+}
+
+function concat(...exprs: Expression<string>[]) {
+  return sql.join<string>(exprs, sql`||`)
+}
+```
+
+Now our query is much cleaner:
+
+```ts
+const lastName = 'STALLONE'
+
+const persons = await db
+  .selectFrom('person')
+  .select(['id', 'first_name'])
+  .where(({ eb, ref }) => eb(
+    upper(ref('last_name')), '=', lastName
+  ))
+  .execute()
+```
+
+## The recipe
+
+The pattern for helper functions is simple:
+
+<Steps>
+<Step title="Accept expressions as input">
+Take inputs as `Expression<T>` where `T` is the type of the expression.
+
+- `upper` takes `Expression<string>` (transforms strings)
+- `round` would take `Expression<number>` (only rounds numbers)
+</Step>
+
+<Step title="Return an expression">
+Use the inputs to create an output that's also an `Expression`. Everything in Kysely is an expression:
+
+- Expression builder outputs
+- `sql` template tag results
+- `SelectQueryBuilder` instances
+- Pretty much everything else
+</Step>
+</Steps>
+
+<Tip>
+See the [expressions recipe](/recipes/expressions) to learn more about how expressions work.
+</Tip>
+
+## Composing helpers
+
+Since everything is an expression, helpers are composable:
+
+```ts
+const persons = await db
+  .selectFrom('person')
+  .select(['id', 'first_name'])
+  .where(({ eb, ref, val }) => eb(
+    concat(
+      lower(ref('first_name')),
+      val(' '),
+      upper(ref('last_name'))
+    ),
+    '=',
+    'sylvester STALLONE'
+  ))
+  .execute()
+```
+
+## Using helpers anywhere
+
+Helpers work in any part of a query:
+
+```ts
+const persons = await db
+  .selectFrom('person')
+  .innerJoin('pet', (join) => join.on(eb => eb(
+    'person.first_name', '=', lower(eb.ref('pet.name'))
+  )))
+  .select(({ ref, val }) => [
+    'first_name',
+    // In select, always provide an explicit name with `as`
+    concat(ref('person.first_name'), val(' '), ref('pet.name')).as('name_with_pet')
+  ])
+  .orderBy(({ ref }) => lower(ref('first_name')))
+  .execute()
+```
+
+<Warning>
+When using a helper in `select`, you must always provide an explicit name using the `as` method.
+</Warning>
+
+## Helpers using ExpressionBuilder
+
+You can create helpers that use the expression builder instead of raw SQL:
+
+```ts
+import { Expression, expressionBuilder } from 'kysely'
+
+function idsOfPersonsThatHaveDogNamed(name: Expression<string>) {
+  const eb = expressionBuilder<DB>()
+  
+  // Returns a subquery
+  return eb
+    .selectFrom('pet')
+    .select('pet.owner_id')
+    .where('pet.species', '=', 'dog')
+    .where('pet.name', '=', name)
+}
+```
+
+Usage:
+
+```ts
+const dogName = 'Doggo'
+
+const persons = await db
+  .selectFrom('person')
+  .selectAll('person')
+  .where((eb) => eb(
+    'person.id', 'in', idsOfPersonsThatHaveDogNamed(eb.val(dogName))
+  ))
+  .execute()
+```
+
+This generates a single query with a subquery:
+
+```sql
+select
+  person.*
+from
+  person
+where
+  person.id in (
+    select pet.owner_id
+    from pet
+    where pet.species = 'dog'
+    and pet.name = ?
+  )
+```
+
+## Boolean expressions
+
+You can create helpers that return boolean expressions:
+
+```ts
+function isOlderThan(age: Expression<number>) {
+  return sql<SqlBool>`age > ${age}`
+}
+```
+
+```ts
+const persons = await db
+  .selectFrom('person')
+  .select(['id', 'first_name'])
+  .where(({ val }) => isOlderThan(val(60)))
+  .execute()
+```
+
+<Info>
+When using `eb` as a function like `eb(left, operator, right)`, it creates a binary expression. All binary expressions with comparison operators are `Expression<SqlBool>`. You can return any `Expression<SqlBool>` from the callback.
+</Info>
+
+## Handling nullable expressions
+
+To support nullable expressions, use conditional types:
+
+```ts
+import { Expression } from 'kysely'
+
+// Accepts both nullable and non-nullable string expressions
+function toInt<T extends string | null>(expr: Expression<T>) {
+  // Returns Expression<number | null> if expr is nullable
+  // Returns Expression<number> otherwise
+  return sql<T extends null ? (number | null) : number>`(${expr})::integer`
+}
+```
+
+## Converting subquery types
+
+SQL allows single-column subqueries to be used as scalars. Use `$asScalar()` to convert the type:
+
+```ts
+const persons = await db
+  .selectFrom('person')
+  .select((eb) => [
+    'id',
+    'first_name',
+    upper(
+      eb.selectFrom('pet')
+        .select('name')
+        .whereRef('person.id', '=', 'pet.owner_id')
+        .limit(1)
+        .$asScalar() // Converts Expression<{ name: string }> to Expression<string>
+        .$notNull()
+    ).as('pet_name')
+  ])
+  .execute()
+```
+
+<Note>
+`$asScalar()` has no effect on the generated SQL — it's purely a type-level helper.
+</Note>
+
+## Key takeaways
+
+<CardGroup cols={2}>
+
+<Card title="Everything is an expression" icon="puzzle-piece">
+All Kysely constructs are composable expressions
+</Card>
+
+<Card title="Type-safe inputs" icon="shield-check">
+Use `Expression<T>` for inputs to maintain type safety
+</Card>
+
+<Card title="Reusable and composable" icon="layer-group">
+Helpers can be used together and anywhere in queries
+</Card>
+
+<Card title="No runtime overhead" icon="gauge-high">
+Helpers are just TypeScript — they compile away
+</Card>
+
+</CardGroup>

@@ -1,0 +1,425 @@
+---
+title: Dialects
+description: Learn about Kysely's database dialect system and how to configure PostgreSQL, MySQL, SQLite, and MS SQL Server
+---
+
+Dialects are the bridge between Kysely and specific database engines. Each dialect handles database-specific query compilation, connection management, and feature support.
+
+## The Dialect Interface
+
+All dialects implement the `Dialect` interface:
+
+```typescript
+interface Dialect {
+  /**
+   * Creates a driver for the dialect.
+   */
+  createDriver(): Driver
+
+  /**
+   * Creates a query compiler for the dialect.
+   */
+  createQueryCompiler(): QueryCompiler
+
+  /**
+   * Creates an adapter for the dialect.
+   */
+  createAdapter(): DialectAdapter
+
+  /**
+   * Creates a database introspector that can be used to get database metadata
+   * such as the table names and column names of those tables.
+   */
+  createIntrospector(db: Kysely<any>): DatabaseIntrospector
+}
+```
+
+## PostgreSQL Dialect
+
+The PostgreSQL dialect uses the [pg](https://node-postgres.com/) library.
+
+### Installation
+
+```bash
+npm install pg
+npm install --save-dev @types/pg
+```
+
+### Basic Configuration
+
+```typescript
+import { Kysely, PostgresDialect } from 'kysely'
+import { Pool } from 'pg'
+
+interface Database {
+  person: {
+    id: Generated<number>
+    first_name: string
+    last_name: string
+  }
+}
+
+const db = new Kysely<Database>({
+  dialect: new PostgresDialect({
+    pool: new Pool({
+      database: 'postgres',
+      host: 'localhost',
+      user: 'postgres',
+      port: 5432,
+      max: 10,
+    })
+  })
+})
+```
+
+### Lazy Pool Initialization
+
+Create the pool only when first used:
+
+```typescript
+import { Pool } from 'pg'
+
+const db = new Kysely<Database>({
+  dialect: new PostgresDialect({
+    pool: async () => new Pool({
+      database: 'postgres',
+      host: 'localhost',
+      user: 'postgres',
+    })
+  })
+})
+```
+
+### PostgreSQL-Specific Features
+
+**RETURNING clause:**
+
+```typescript
+const person = await db
+  .insertInto('person')
+  .values({ first_name: 'Jennifer', last_name: 'Aniston' })
+  .returningAll()
+  .executeTakeFirst()
+```
+
+**JSON operations:**
+
+```typescript
+await db
+  .selectFrom('person')
+  .select((eb) => [
+    eb.fn('json_agg', ['person.id']).as('ids')
+  ])
+  .execute()
+```
+
+## MySQL Dialect
+
+The MySQL dialect uses the [mysql2](https://github.com/sidorares/node-mysql2) library.
+
+### Installation
+
+```bash
+npm install mysql2
+```
+
+### Basic Configuration
+
+```typescript
+import { Kysely, MysqlDialect } from 'kysely'
+import { createPool } from 'mysql2'
+
+const db = new Kysely<Database>({
+  dialect: new MysqlDialect({
+    pool: createPool({
+      database: 'test',
+      host: 'localhost',
+      user: 'root',
+      port: 3306,
+      connectionLimit: 10,
+    })
+  })
+})
+```
+
+### Lazy Pool Initialization
+
+```typescript
+import { createPool } from 'mysql2'
+
+const db = new Kysely<Database>({
+  dialect: new MysqlDialect({
+    pool: async () => createPool({
+      database: 'test',
+      host: 'localhost',
+    })
+  })
+})
+```
+
+### MySQL-Specific Features
+
+**LIMIT with OFFSET:**
+
+```typescript
+await db
+  .selectFrom('person')
+  .selectAll()
+  .limit(10)
+  .offset(20)
+  .execute()
+```
+
+## SQLite Dialect
+
+The SQLite dialect uses the [better-sqlite3](https://github.com/JoshuaWise/better-sqlite3) library.
+
+### Installation
+
+```bash
+npm install better-sqlite3
+npm install --save-dev @types/better-sqlite3
+```
+
+### Basic Configuration
+
+```typescript
+import { Kysely, SqliteDialect } from 'kysely'
+import Database from 'better-sqlite3'
+
+const db = new Kysely<Database>({
+  dialect: new SqliteDialect({
+    database: new Database('database.db')
+  })
+})
+```
+
+### In-Memory Database
+
+```typescript
+const db = new Kysely<Database>({
+  dialect: new SqliteDialect({
+    database: new Database(':memory:')
+  })
+})
+```
+
+### Lazy Database Initialization
+
+```typescript
+import Database from 'better-sqlite3'
+
+const db = new Kysely<Database>({
+  dialect: new SqliteDialect({
+    database: async () => new Database('database.db')
+  })
+})
+```
+
+### SQLite-Specific Features
+
+**AUTOINCREMENT:**
+
+```typescript
+interface PersonTable {
+  id: Generated<number>  // SQLite's INTEGER PRIMARY KEY AUTOINCREMENT
+  name: string
+}
+```
+
+**RETURNING (SQLite 3.35.0+):**
+
+```typescript
+const inserted = await db
+  .insertInto('person')
+  .values({ name: 'Jennifer' })
+  .returningAll()
+  .executeTakeFirst()
+```
+
+## MS SQL Server Dialect
+
+The MS SQL Server dialect uses the [tedious](https://tediousjs.github.io/tedious) library with [tarn](https://github.com/vincit/tarn.js) for connection pooling.
+
+### Installation
+
+```bash
+npm install tedious
+npm install tarn
+```
+
+### Basic Configuration
+
+```typescript
+import { Kysely, MssqlDialect } from 'kysely'
+import * as Tedious from 'tedious'
+import * as Tarn from 'tarn'
+
+const db = new Kysely<Database>({
+  dialect: new MssqlDialect({
+    tarn: {
+      ...Tarn,
+      options: {
+        min: 0,
+        max: 10,
+      },
+    },
+    tedious: {
+      ...Tedious,
+      connectionFactory: () => new Tedious.Connection({
+        authentication: {
+          options: {
+            password: 'password',
+            userName: 'sa',
+          },
+          type: 'default',
+        },
+        options: {
+          database: 'master',
+          port: 1433,
+          trustServerCertificate: true,
+        },
+        server: 'localhost',
+      }),
+    },
+  })
+})
+```
+
+### MS SQL-Specific Features
+
+**TOP clause:**
+
+```typescript
+await db
+  .selectFrom('person')
+  .selectAll()
+  .top(10)
+  .execute()
+```
+
+**OUTPUT clause:**
+
+```typescript
+const inserted = await db
+  .insertInto('person')
+  .output(['inserted.id', 'inserted.first_name'])
+  .values({ first_name: 'Jennifer', last_name: 'Aniston' })
+  .execute()
+```
+
+## Dialect Comparison
+
+| Feature | PostgreSQL | MySQL | SQLite | MS SQL Server |
+|---------|------------|-------|--------|---------------|
+| **RETURNING** | ✓ | ✗ | ✓ (3.35.0+) | ✗ |
+| **OUTPUT** | ✗ | ✗ | ✗ | ✓ |
+| **JSON operators** | ✓ | ✓ (5.7+) | ✓ (3.38.0+) | ✓ (2016+) |
+| **Window functions** | ✓ | ✓ (8.0+) | ✓ (3.25.0+) | ✓ |
+| **CTEs** | ✓ | ✓ (8.0+) | ✓ (3.8.3+) | ✓ |
+| **Transactions** | ✓ | ✓ | ✓ | ✓ |
+| **Streaming** | ✓ | ✓ | ✗ | ✓ |
+
+## Connection Pooling
+
+Each dialect handles connection pooling differently:
+
+**PostgreSQL (pg):**
+```typescript
+import { Pool } from 'pg'
+
+const pool = new Pool({
+  max: 10,                // Maximum pool size
+  idleTimeoutMillis: 30000, // Close idle clients after 30s
+  connectionTimeoutMillis: 2000, // Return error after 2s if can't connect
+})
+```
+
+**MySQL (mysql2):**
+```typescript
+import { createPool } from 'mysql2'
+
+const pool = createPool({
+  connectionLimit: 10,
+  queueLimit: 0,
+  waitForConnections: true,
+})
+```
+
+**SQLite (better-sqlite3):**
+```typescript
+// No connection pooling - synchronous, single-connection
+import Database from 'better-sqlite3'
+
+const database = new Database('db.sqlite', {
+  readonly: false,
+  fileMustExist: false,
+})
+```
+
+**MS SQL Server (tedious + tarn):**
+```typescript
+import * as Tarn from 'tarn'
+
+const tarnConfig = {
+  ...Tarn,
+  options: {
+    min: 2,
+    max: 10,
+    acquireTimeoutMillis: 30000,
+    createTimeoutMillis: 30000,
+    idleTimeoutMillis: 30000,
+  },
+}
+```
+
+## Custom Dialects
+
+You can create custom dialects by implementing the `Dialect` interface:
+
+```typescript
+import {
+  Dialect,
+  Driver,
+  QueryCompiler,
+  DialectAdapter,
+  DatabaseIntrospector,
+  Kysely
+} from 'kysely'
+
+class CustomDialect implements Dialect {
+  createDriver(): Driver {
+    // Return your custom driver
+  }
+
+  createQueryCompiler(): QueryCompiler {
+    // Return your custom query compiler
+  }
+
+  createAdapter(): DialectAdapter {
+    // Return your custom adapter
+  }
+
+  createIntrospector(db: Kysely<any>): DatabaseIntrospector {
+    // Return your custom introspector
+  }
+}
+```
+
+## Best Practices
+
+<Tip>
+  Always close your database connection when shutting down your application using `await db.destroy()`.
+</Tip>
+
+<Tip>
+  Use lazy pool initialization in serverless environments to avoid creating connections at module load time.
+</Tip>
+
+<Warning>
+  SQLite's better-sqlite3 is synchronous and single-threaded. Don't use it for high-concurrency applications.
+</Warning>
+
+<Note>
+  Different dialects support different SQL features. Always check the dialect-specific documentation when using advanced features.
+</Note>

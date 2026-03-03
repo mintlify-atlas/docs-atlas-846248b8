@@ -1,0 +1,298 @@
+---
+title: 'MysqlDialect'
+description: 'MySQL dialect using the mysql2 library'
+---
+
+## Overview
+
+MySQL dialect that uses the [mysql2](https://github.com/sidorares/node-mysql2) library. This dialect works with both MySQL and MariaDB databases.
+
+**Source:** `src/dialect/mysql/mysql-dialect.ts:43`
+
+## Installation
+
+Install the required peer dependency:
+
+```bash
+npm install mysql2
+```
+
+## Basic Usage
+
+<CodeGroup>
+```typescript Eager Pool
+import { Kysely, MysqlDialect } from 'kysely'
+import { createPool } from 'mysql2'
+
+const db = new Kysely<Database>({
+  dialect: new MysqlDialect({
+    pool: createPool({
+      host: 'localhost',
+      database: 'mydatabase',
+      user: 'myuser',
+      password: 'mypassword',
+      port: 3306,
+      connectionLimit: 10,
+    })
+  })
+})
+```
+
+```typescript Lazy Pool
+import { Kysely, MysqlDialect } from 'kysely'
+import { createPool } from 'mysql2'
+
+// Pool is created only when first query is executed
+const db = new Kysely<Database>({
+  dialect: new MysqlDialect({
+    pool: async () => createPool({
+      host: 'localhost',
+      database: 'mydatabase',
+      user: 'myuser',
+      password: 'mypassword',
+    })
+  })
+})
+```
+</CodeGroup>
+
+## Configuration
+
+### MysqlDialectConfig
+
+**Source:** `src/dialect/mysql/mysql-dialect-config.ts:8`
+
+<ParamField path="pool" type="MysqlPool | (() => Promise<MysqlPool>)" required>
+  A mysql2 Pool instance or a function that returns one.
+  
+  If a function is provided, it's called once when the first query is executed. This allows for lazy initialization of the connection pool.
+  
+  See [mysql2 pool documentation](https://github.com/sidorares/node-mysql2#using-connection-pools) for available pool options.
+</ParamField>
+
+<ParamField path="onCreateConnection" type="(connection: DatabaseConnection) => Promise<void>">
+  Called once for each created connection. Useful for setting up connection-level configuration.
+
+  ```typescript
+  new MysqlDialect({
+    pool: createPool({ /* ... */ }),
+    onCreateConnection: async (connection) => {
+      await connection.executeQuery(
+        CompiledQuery.raw('SET time_zone = "+00:00"')
+      )
+    }
+  })
+  ```
+</ParamField>
+
+<ParamField path="onReserveConnection" type="(connection: DatabaseConnection) => Promise<void>">
+  Called every time a connection is acquired from the connection pool. Use this for per-query setup.
+
+  ```typescript
+  new MysqlDialect({
+    pool: createPool({ /* ... */ }),
+    onReserveConnection: async (connection) => {
+      // Run on every connection acquisition
+      await connection.executeQuery(
+        CompiledQuery.raw('SET SESSION sql_mode = "TRADITIONAL"')
+      )
+    }
+  })
+  ```
+</ParamField>
+
+## Connection Pooling
+
+The MySQL dialect uses the `mysql2` library's built-in connection pooling. Here are recommended pool settings:
+
+```typescript
+import { createPool } from 'mysql2'
+
+const pool = createPool({
+  // Connection settings
+  host: 'localhost',
+  port: 3306,
+  database: 'mydb',
+  user: 'user',
+  password: 'password',
+
+  // Pool settings
+  connectionLimit: 10, // Maximum number of connections
+  waitForConnections: true, // Queue requests when no connections available
+  queueLimit: 0, // Unlimited queue size
+  enableKeepAlive: true, // Keep connections alive
+  keepAliveInitialDelay: 0, // Initial keep-alive delay
+})
+```
+
+## SSL/TLS Configuration
+
+To connect using SSL:
+
+```typescript
+import { createPool } from 'mysql2'
+import fs from 'fs'
+
+const pool = createPool({
+  host: 'localhost',
+  database: 'mydb',
+  ssl: {
+    ca: fs.readFileSync('/path/to/ca-cert.pem'),
+    key: fs.readFileSync('/path/to/client-key.pem'),
+    cert: fs.readFileSync('/path/to/client-cert.pem'),
+    rejectUnauthorized: true,
+  }
+})
+```
+
+## Streaming Results
+
+The MySQL dialect supports streaming large result sets:
+
+```typescript
+const stream = db
+  .selectFrom('large_table')
+  .selectAll()
+  .stream()
+
+for await (const row of stream) {
+  console.log(row)
+  // Process row by row without loading entire result set into memory
+}
+```
+
+You can also configure stream options:
+
+```typescript
+const stream = db
+  .selectFrom('large_table')
+  .selectAll()
+  .stream(1000) // High water mark: buffer up to 1000 rows
+
+for await (const row of stream) {
+  console.log(row)
+}
+```
+
+## Character Set and Collation
+
+Configure character set and collation for your connection:
+
+```typescript
+import { createPool } from 'mysql2'
+
+const pool = createPool({
+  host: 'localhost',
+  database: 'mydb',
+  charset: 'utf8mb4',
+  // Collation is set at database/table level
+})
+```
+
+## Timezone Handling
+
+MySQL connections default to the server's timezone. To use UTC:
+
+```typescript
+import { createPool } from 'mysql2'
+
+const pool = createPool({
+  host: 'localhost',
+  database: 'mydb',
+  timezone: '+00:00', // UTC
+})
+```
+
+Or set it per connection:
+
+```typescript
+new MysqlDialect({
+  pool: createPool({ /* ... */ }),
+  onCreateConnection: async (connection) => {
+    await connection.executeQuery(
+      CompiledQuery.raw('SET time_zone = "+00:00"')
+    )
+  }
+})
+```
+
+## Multiple Statements
+
+To execute multiple statements in a single query:
+
+```typescript
+import { createPool } from 'mysql2'
+
+const pool = createPool({
+  host: 'localhost',
+  database: 'mydb',
+  multipleStatements: true, // Enable multiple statements
+})
+```
+
+<Warning>
+  Enabling multiple statements can expose you to SQL injection vulnerabilities if you're not careful with user input. Only enable this if you need it and understand the security implications.
+</Warning>
+
+## MariaDB Compatibility
+
+The `MysqlDialect` works with MariaDB databases. Simply point it to your MariaDB server:
+
+```typescript
+import { createPool } from 'mysql2'
+
+const pool = createPool({
+  host: 'localhost',
+  port: 3306, // Default MariaDB port
+  database: 'mydb',
+  user: 'user',
+  password: 'password',
+})
+```
+
+## Related Types
+
+### MysqlPool
+
+**Source:** `src/dialect/mysql/mysql-dialect-config.ts:37`
+
+The subset of the `mysql2` Pool interface that Kysely requires:
+
+```typescript
+interface MysqlPool {
+  getConnection(callback: (error: unknown, connection: MysqlPoolConnection) => void): void
+  end(callback: (error: unknown) => void): void
+}
+```
+
+### MysqlPoolConnection
+
+**Source:** `src/dialect/mysql/mysql-dialect-config.ts:44`
+
+```typescript
+interface MysqlPoolConnection {
+  query(sql: string, parameters: ReadonlyArray<unknown>): {
+    stream: <T>(options: MysqlStreamOptions) => MysqlStream<T>
+  }
+  query(
+    sql: string,
+    parameters: ReadonlyArray<unknown>,
+    callback: (error: unknown, result: MysqlQueryResult) => void
+  ): void
+  release(): void
+}
+```
+
+### MysqlOkPacket
+
+**Source:** `src/dialect/mysql/mysql-dialect-config.ts:66`
+
+Result type for INSERT, UPDATE, and DELETE queries:
+
+```typescript
+interface MysqlOkPacket {
+  affectedRows: number
+  changedRows: number
+  insertId: number
+}
+```

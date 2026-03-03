@@ -1,0 +1,161 @@
+---
+title: Introduction to Kysely
+description: A type-safe and autocompletion-friendly TypeScript SQL query builder for PostgreSQL, MySQL, SQLite, and MS SQL Server.
+---
+
+# Kysely: Type-Safe SQL Query Builder
+
+Kysely (pronounced "Key-Seh-Lee") is a type-safe and autocompletion-friendly TypeScript SQL query builder. Inspired by Knex.js, Kysely brings the power of SQL with the safety of TypeScript to your database operations.
+
+<CardGroup cols={3}>
+  <Card title="Type-Safe Queries" icon="shield-check">
+    Kysely ensures you only reference tables and columns that exist in your database schema at compile time.
+  </Card>
+  <Card title="Full Autocompletion" icon="sparkles">
+    Get intelligent autocompletion for table names, column names, and even inferred aliases.
+  </Card>
+  <Card title="Universal Runtime" icon="globe">
+    Works seamlessly with Node.js, Deno, Bun, Cloudflare Workers, and web browsers.
+  </Card>
+</CardGroup>
+
+## Why Kysely?
+
+Kysely makes sure you only refer to tables and columns that are visible to the part of the query you're writing. The result type only has the selected columns with correct types and aliases. As an added bonus, you get autocompletion for all that stuff.
+
+### Intelligent Type Inference
+
+Through the pure magic of modern TypeScript, Kysely is able to parse aliases and add them to the result row type. Kysely can infer column names, aliases, and types from:
+
+- Selected subqueries
+- Joined subqueries  
+- `WITH` statements
+- Complex expressions
+- And much more
+
+<CodeGroup>
+```typescript Example Query
+import { db } from './database'
+
+const result = await db
+  .selectFrom('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  .select([
+    'person.id',
+    'person.first_name',
+    'pet.name as pet_name'
+  ])
+  .where('person.id', '=', 1)
+  .executeTakeFirst()
+
+// result has type:
+// {
+//   id: number
+//   first_name: string
+//   pet_name: string
+// } | undefined
+```
+
+```typescript Type-Safe Updates
+import { db } from './database'
+import { UpdateableUserRow } from './types'
+
+async function updateUser(id: string, updates: UpdateableUserRow) {
+  await db
+    .updateTable('user')
+    .set(updates)
+    .where('user_id', '=', id)
+    .execute()
+}
+```
+</CodeGroup>
+
+## Supported Databases
+
+Kysely supports all major SQL databases with first-class TypeScript support:
+
+<CardGroup cols={2}>
+  <Card title="PostgreSQL" icon="database">
+    Full support with the `PostgresDialect` using the `pg` driver
+  </Card>
+  <Card title="MySQL" icon="database">
+    Full support with the `MysqlDialect` using the `mysql2` driver
+  </Card>
+  <Card title="SQLite" icon="database">
+    Full support with the `SqliteDialect` using the `better-sqlite3` driver
+  </Card>
+  <Card title="MS SQL Server" icon="database">
+    Full support with the `MssqlDialect` using the `tedious` driver
+  </Card>
+</CardGroup>
+
+## Get Started
+
+<CardGroup cols={3}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install Kysely with npm, yarn, pnpm, or bun
+  </Card>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get up and running with your first query in minutes
+  </Card>
+  <Card title="API Reference" icon="book" href="https://kysely-org.github.io/kysely-apidoc/">
+    Comprehensive API documentation with examples
+  </Card>
+</CardGroup>
+
+## Key Features
+
+### Schema Migrations
+
+Kysely includes a powerful migration system for managing database schema changes:
+
+```typescript
+import { Kysely, sql } from 'kysely'
+
+export async function up(db: Kysely<any>): Promise<void> {
+  await db.schema
+    .createTable('user')
+    .addColumn('user_id', 'uuid', (col) =>
+      col.primaryKey().defaultTo(sql`gen_random_uuid()`)
+    )
+    .addColumn('first_name', 'text')
+    .addColumn('last_name', 'text')
+    .addColumn('email', 'text', (col) => col.unique())
+    .addColumn('created_at', 'timestamp', (col) => col.defaultTo(sql`NOW()`))
+    .execute()
+}
+
+export async function down(db: Kysely<any>): Promise<void> {
+  await db.schema.dropTable('user').execute()
+}
+```
+
+### Escape Hatches
+
+When you need raw SQL for complex queries, Kysely provides the `sql` template tag:
+
+```typescript
+import { sql } from 'kysely'
+
+const result = await db
+  .selectFrom('person')
+  .select([
+    'id',
+    sql<string>`concat(first_name, ' ', last_name)`.as('full_name')
+  ])
+  .execute()
+```
+
+<Note>
+  All API documentation is written in the TypeScript definition files. Simply hover over any method in your IDE to see comprehensive documentation.
+</Note>
+
+## Community and Support
+
+- **Discord**: Join our [Discord server](https://discord.gg/xyBJ3GwvAm) for help and discussions
+- **GitHub**: Report issues or contribute on [GitHub](https://github.com/kysely-org/kysely)
+- **Documentation**: Visit [kysely.dev](https://kysely.dev) for comprehensive guides
+
+<Warning>
+  Kysely requires TypeScript 4.6 or later for full type-safety features.
+</Warning>

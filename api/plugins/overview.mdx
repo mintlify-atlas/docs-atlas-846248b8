@@ -1,0 +1,169 @@
+---
+title: KyselyPlugin Interface
+description: Core interface for creating Kysely plugins that transform queries and results
+---
+
+## Overview
+
+The `KyselyPlugin` interface is the foundation for all Kysely plugins. Plugins allow you to intercept and modify queries before execution and transform results after execution.
+
+## Interface Definition
+
+```typescript
+interface KyselyPlugin {
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode
+  transformResult(args: PluginTransformResultArgs): Promise<QueryResult<UnknownRow>>
+}
+```
+
+## Methods
+
+### transformQuery
+
+```typescript
+transformQuery(args: PluginTransformQueryArgs): RootOperationNode
+```
+
+This method is called for each query before it is executed. You can modify the query by transforming its OperationNode tree.
+
+**Parameters:**
+
+- `args.queryId` - Unique identifier for the query
+- `args.node` - The root operation node representing the query
+
+**Returns:** The transformed root operation node
+
+**Usage:**
+
+You typically use an `OperationNodeTransformer` to transform the query tree:
+
+```typescript
+import { OperationNodeTransformer, KyselyPlugin } from 'kysely'
+
+class MyTransformer extends OperationNodeTransformer {
+  // Override specific transformation methods
+}
+
+class MyPlugin implements KyselyPlugin {
+  #transformer = new MyTransformer()
+
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
+    return this.#transformer.transformNode(args.node, args.queryId)
+  }
+}
+```
+
+### transformResult
+
+```typescript
+transformResult(args: PluginTransformResultArgs): Promise<QueryResult<UnknownRow>>
+```
+
+This method is called for each query after it has been executed. You can modify the result and return the modified result.
+
+**Parameters:**
+
+- `args.queryId` - Unique identifier for the query (same as in `transformQuery`)
+- `args.result` - The query result containing rows and metadata
+
+**Returns:** A promise resolving to the transformed query result
+
+**Example:**
+
+```typescript
+async transformResult(
+  args: PluginTransformResultArgs
+): Promise<QueryResult<UnknownRow>> {
+  if (args.result.rows && Array.isArray(args.result.rows)) {
+    return {
+      ...args.result,
+      rows: args.result.rows.map(row => transformRow(row))
+    }
+  }
+  
+  return args.result
+}
+```
+
+## Sharing Data Between Methods
+
+If you need to pass query-related data between `transformQuery` and `transformResult`, use a `WeakMap` with `args.queryId` as the key:
+
+```typescript
+import type {
+  KyselyPlugin,
+  QueryResult,
+  RootOperationNode,
+  UnknownRow
+} from 'kysely'
+
+interface MyData {
+  // Your data structure
+}
+
+const data = new WeakMap<any, MyData>()
+
+const plugin = {
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
+    const something: MyData = {
+      // Collect data during query transformation
+    }
+
+    data.set(args.queryId, something)
+    return args.node
+  },
+
+  async transformResult(
+    args: PluginTransformResultArgs
+  ): Promise<QueryResult<UnknownRow>> {
+    const something = data.get(args.queryId)
+    // Use the data to transform results
+    return args.result
+  }
+} satisfies KyselyPlugin
+```
+
+<Warning>
+  Use a `WeakMap` instead of a `Map` because `transformQuery` is not always matched by a call to `transformResult`, which would leave orphaned items in the map and cause a memory leak.
+</Warning>
+
+## Using Plugins
+
+### Global Installation
+
+Add plugins when creating a Kysely instance:
+
+```typescript
+import { Kysely } from 'kysely'
+
+const db = new Kysely<Database>({
+  dialect,
+  plugins: [new MyPlugin()]
+})
+```
+
+### Per-Query Installation
+
+Apply a plugin to a single query:
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .selectAll()
+  .withPlugin(new MyPlugin())
+  .execute()
+```
+
+## Built-in Plugins
+
+Kysely provides several built-in plugins:
+
+- [CamelCasePlugin](/api/plugins/camel-case) - Converts snake_case to camelCase
+- [WithSchemaPlugin](/api/plugins/with-schema) - Adds schema prefix to all tables
+- [ParseJSONResultsPlugin](/api/plugins/parse-json-results) - Parses JSON strings in results
+- [DeduplicateJoinsPlugin](/api/plugins/deduplicate-joins) - Removes duplicate joins
+
+## See Also
+
+- [Creating Custom Plugins](/api/plugins/custom-plugins)
+- [OperationNodeTransformer](/api/operation-node-transformer)

@@ -1,0 +1,443 @@
+---
+title: Raw SQL
+description: Learn how to use raw SQL in Kysely with the sql template tag for complex queries and database-specific features.
+---
+
+The `sql` template tag allows you to write raw SQL snippets and queries when Kysely's query builder API doesn't cover your use case. It provides a safe way to embed SQL while preventing SQL injection through parameterization.
+
+## Basic Usage
+
+### Simple Raw SQL
+
+Create a raw SQL snippet:
+
+```typescript
+import { sql } from 'kysely'
+
+const id = 123
+const snippet = sql<Person[]>`select * from person where id = ${id}`
+```
+
+Substitutions (the things inside `${}`) are automatically passed to the database as parameters and are never interpolated into the SQL string. There's no need to worry about SQL injection vulnerabilities.
+
+### Executing Raw SQL
+
+SQL snippets can be executed by calling the `execute` method:
+
+```typescript
+import { sql } from 'kysely'
+
+const { rows: results } = await sql<Person[]>`select * from person`.execute(db)
+```
+
+## Using Raw SQL in Queries
+
+You can use raw SQL expressions in select, where, and other clauses:
+
+```typescript
+const nicknames = ['johnny', 'john', 'jon']
+const date1 = new Date('2000-01-01')
+const date2 = new Date('2001-01-01')
+
+const persons = await db
+  .selectFrom('person')
+  .select(
+    // Raw SQL in select - remember to call `as` to give it an alias
+    sql<string>`concat(first_name, ' ', last_name)`.as('full_name')
+  )
+  .where(sql<boolean>`birthdate between ${date1} and ${date2}`)
+  // PostgreSQL array operator
+  .where('nicknames', '@>', sql<string[]>`ARRAY[${sql.join(nicknames)}]`)
+  .orderBy(sql<string>`concat(first_name, ' ', last_name)`)
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select concat(first_name, ' ', last_name) as "full_name"
+from "person"
+where birthdate between $1 and $2
+and "nicknames" @> ARRAY[$3, $4, $5, $6, $7, $8, $9, $10]
+order by concat(first_name, ' ', last_name)
+```
+
+## Merging SQL Expressions
+
+You can merge other `sql` expressions and queries using substitutions:
+
+```typescript
+const petName = db.selectFrom('pet').select('name').limit(1)
+const fullName = sql<string>`concat(first_name, ' ', last_name)`
+
+sql<{ full_name: string; pet_name: string }[]>`
+  select ${fullName} as full_name, ${petName} as pet_name
+  from person
+`.execute(db)
+```
+
+## Helper Methods
+
+The `sql` tag provides several helper methods for common use cases:
+
+### sql.ref - Column References
+
+Interpret a substitution as a column reference:
+
+```typescript
+const columnRef = 'first_name'
+
+sql`select ${sql.ref(columnRef)} from person`
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select "first_name" from person
+```
+
+References can include table names:
+
+```typescript
+const columnRef = 'person.first_name'
+
+sql`select ${sql.ref(columnRef)} from person`
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select "person"."first_name" from person
+```
+
+And schemas on supported databases:
+
+```typescript
+const columnRef = 'public.person.first_name'
+
+sql`select ${sql.ref(columnRef)} from person`
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select "public"."person"."first_name" from person
+```
+
+<Warning>
+Using `sql.ref` with unchecked inputs WILL lead to SQL injection vulnerabilities. The input is not checked or escaped by Kysely in any way.
+</Warning>
+
+### sql.table - Table References
+
+Interpret a substitution as a table reference:
+
+```typescript
+const table = 'person'
+
+sql`select first_name from ${sql.table(table)}`
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select first_name from "person"
+```
+
+With schema:
+
+```typescript
+const table = 'public.person'
+
+sql`select first_name from ${sql.table(table)}`
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select first_name from "public"."person"
+```
+
+<Warning>
+Using `sql.table` with unchecked inputs WILL lead to SQL injection vulnerabilities.
+</Warning>
+
+### sql.id - Arbitrary Identifiers
+
+Add arbitrary identifiers (like index names):
+
+```typescript
+const indexName = 'person_first_name_index'
+
+sql`create index ${sql.id(indexName)} on person`
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+create index "person_first_name_index" on person
+```
+
+Multiple identifiers get separated by dots:
+
+```typescript
+const schema = 'public'
+const columnName = 'first_name'
+const table = 'person'
+
+sql`select ${sql.id(schema, table, columnName)} from ${sql.id(schema, table)}`
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select "public"."person"."first_name" from "public"."person"
+```
+
+<Warning>
+Using `sql.id` with unchecked inputs WILL lead to SQL injection vulnerabilities.
+</Warning>
+
+### sql.val - Value Parameters
+
+`sql.val(value)` is a shortcut for:
+
+```typescript
+const value = 123
+type ValueType = typeof value
+
+sql<ValueType>`${value}`
+```
+
+Example:
+
+```typescript
+await db
+  .selectFrom('person')
+  .select((eb) => [
+    'first_name',
+    eb.fn.coalesce('last_name', sql.val('N/A')).as('last_name')
+  ])
+  .execute()
+```
+
+### sql.lit - Literal Values
+
+Add literal values directly to the SQL string:
+
+```typescript
+const firstName = 'first_name'
+
+sql`select * from person where first_name = ${sql.lit(firstName)}`
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select * from person where first_name = 'first_name'
+```
+
+<Warning>
+The value is added directly to the SQL string instead of as a parameter. Using `sql.lit` with unchecked inputs WILL lead to SQL injection vulnerabilities. Only use this when something can't be sent as a parameter.
+</Warning>
+
+### sql.raw - Raw SQL Strings
+
+Add arbitrary runtime SQL:
+
+```typescript
+const firstName = "'first_name'"
+
+sql`select * from person where first_name = ${sql.raw(firstName)}`
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select * from person where first_name = 'first_name'
+```
+
+<Note>
+The difference between `sql.lit` and `sql.raw` is that `sql.lit` assumes the input is a value and will quote it appropriately, while `sql.raw` assumes the input is already valid SQL and glues it in as-is.
+</Note>
+
+<Warning>
+Using `sql.raw` with unchecked inputs WILL lead to SQL injection vulnerabilities.
+</Warning>
+
+### sql.join - Lists
+
+Join arrays of values or expressions:
+
+```typescript
+function findByNicknames(nicknames: string[]): Promise<Person[]> {
+  return db
+    .selectFrom('person')
+    .selectAll()
+    .where('nicknames', '@>', sql<string[]>`ARRAY[${sql.join(nicknames)}]`)
+    .execute()
+}
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select * from "person"
+where "nicknames" @> ARRAY[$1, $2, $3, $4, $5, $6, $7, $8]
+```
+
+The second argument is the joining expression (defaults to `, `):
+
+```typescript
+const things = [
+  123,
+  sql`(1 == 1)`,
+  db.selectFrom('person').selectAll(),
+  sql.lit(false),
+  sql.id('first_name')
+]
+
+sql`BEFORE ${sql.join(things, sql`::varchar, `)} AFTER`
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+BEFORE $1::varchar, (1 == 1)::varchar, (select * from "person")::varchar, false::varchar, "first_name" AFTER
+```
+
+## Type Safety
+
+When using the `sql` tag, you need to specify the type of the expression:
+
+```typescript
+// Specify that this expression returns a string
+const fullName = sql<string>`concat(first_name, ' ', last_name)`
+
+// Specify that this expression returns a boolean
+const isAdult = sql<boolean>`age >= 18`
+
+// Specify the return type of a query
+const results = await sql<Person[]>`select * from person`.execute(db)
+```
+
+## Working with Expression Builder
+
+You can combine raw SQL with the expression builder for type-safe column references:
+
+```typescript
+db.selectFrom('person')
+  .select([
+    'first_name',
+    'last_name',
+    (eb) => {
+      // The `eb.ref` method is type-safe
+      const firstName = eb.ref('first_name')
+      const lastName = eb.ref('last_name')
+
+      const fullName = sql<string>`concat(${firstName}, ' ', ${lastName})`
+      return fullName.as('full_name')
+    }
+  ])
+```
+
+## Common Use Cases
+
+### Database Functions
+
+Use raw SQL for database-specific functions:
+
+```typescript
+// PostgreSQL JSON operations
+const result = await db
+  .selectFrom('person')
+  .select([
+    'id',
+    sql<string>`data->>'name'`.as('json_name')
+  ])
+  .execute()
+
+// Window functions
+const result = await db
+  .selectFrom('person')
+  .select([
+    'id',
+    'age',
+    sql<number>`row_number() over (order by age)`.as('row_num')
+  ])
+  .execute()
+```
+
+### CTEs with Raw SQL
+
+```typescript
+const result = await db
+  .with('top_persons', sql`
+    select * from person
+    order by age desc
+    limit 10
+  `)
+  .selectFrom('top_persons')
+  .selectAll()
+  .execute()
+```
+
+### Complex WHERE Conditions
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .selectAll()
+  .where(sql<boolean>`
+    (age > 18 AND country = 'USA')
+    OR (age > 21 AND country = 'Canada')
+  `)
+  .execute()
+```
+
+### Database-Specific Features
+
+```typescript
+// PostgreSQL full-text search
+const result = await db
+  .selectFrom('articles')
+  .selectAll()
+  .where(sql<boolean>`to_tsvector('english', content) @@ to_tsquery('english', ${searchTerm})`)
+  .execute()
+
+// MySQL MATCH AGAINST
+const result = await db
+  .selectFrom('articles')
+  .selectAll()
+  .where(sql<boolean>`MATCH(title, content) AGAINST(${searchTerm} IN BOOLEAN MODE)`)
+  .execute()
+```
+
+## Best Practices
+
+1. **Always use parameters**: Never concatenate user input directly into SQL strings
+2. **Specify types**: Always provide type parameters to the `sql` tag
+3. **Use helpers cautiously**: Only use `sql.ref`, `sql.table`, `sql.id`, `sql.lit`, and `sql.raw` with trusted inputs
+4. **Prefer query builder**: Use raw SQL only when the query builder doesn't support your use case
+5. **Keep it simple**: Break complex raw SQL into smaller, reusable pieces
+
+## API Reference
+
+### Main Tag
+
+- `sql<T>` - Create a raw SQL expression
+
+### Helper Methods
+
+- `sql.ref<R>(columnReference)` - Column reference
+- `sql.table<T>(tableReference)` - Table reference
+- `sql.id<T>(...ids)` - Arbitrary identifier
+- `sql.val<V>(value)` - Value parameter
+- `sql.lit<V>(value)` - Literal value
+- `sql.raw<R>(sql)` - Raw SQL string
+- `sql.join<T>(array, separator?)` - Join array items
+
+### Deprecated
+
+- `sql.value<V>(value)` - Use `sql.val` instead
+- `sql.literal<V>(value)` - Use `sql.lit` instead

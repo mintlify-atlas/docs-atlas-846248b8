@@ -1,0 +1,95 @@
+---
+title: 'Dialect Interface'
+description: 'The glue between Kysely and the underlying database engine'
+---
+
+## Overview
+
+A Dialect is the glue between Kysely and the underlying database engine. Kysely provides built-in dialects for PostgreSQL, MySQL, SQLite, and MS SQL Server. Users can also implement custom dialects for other database engines.
+
+## Interface Definition
+
+The `Dialect` interface is defined in `src/dialect/dialect.ts:14` and requires the following methods:
+
+```typescript
+export interface Dialect {
+  createDriver(): Driver
+  createQueryCompiler(): QueryCompiler
+  createAdapter(): DialectAdapter
+  createIntrospector(db: Kysely<any>): DatabaseIntrospector
+}
+```
+
+## Methods
+
+<ParamField path="createDriver" type="() => Driver" required>
+  Creates a driver for the dialect. The driver handles the actual communication with the database, including connection pooling and query execution.
+</ParamField>
+
+<ParamField path="createQueryCompiler" type="() => QueryCompiler" required>
+  Creates a query compiler for the dialect. The query compiler is responsible for transforming Kysely's abstract query representation into SQL specific to the database engine.
+</ParamField>
+
+<ParamField path="createAdapter" type="() => DialectAdapter" required>
+  Creates an adapter for the dialect. The adapter provides database-specific utilities for things like identifier quoting and data type mapping.
+</ParamField>
+
+<ParamField path="createIntrospector" type="(db: Kysely<any>) => DatabaseIntrospector" required>
+  Creates a database introspector that can be used to get database metadata such as table names and column names. The `db` parameter never has any plugins installed - it's created using `Kysely.withoutPlugins`.
+</ParamField>
+
+## Built-in Dialects
+
+Kysely provides the following built-in dialects:
+
+<CardGroup cols={2}>
+  <Card title="PostgreSQL" icon="database" href="/api/dialects/postgresql">
+    Uses the `pg` driver for PostgreSQL databases
+  </Card>
+  <Card title="MySQL" icon="database" href="/api/dialects/mysql">
+    Uses the `mysql2` driver for MySQL and MariaDB databases
+  </Card>
+  <Card title="SQLite" icon="database" href="/api/dialects/sqlite">
+    Uses the `better-sqlite3` driver for SQLite databases
+  </Card>
+  <Card title="MS SQL Server" icon="database" href="/api/dialects/mssql">
+    Uses the `tedious` driver for MS SQL Server databases
+  </Card>
+</CardGroup>
+
+## Creating a Custom Dialect
+
+To create a custom dialect, implement the `Dialect` interface:
+
+```typescript
+import type { Dialect, Driver, QueryCompiler, DialectAdapter, DatabaseIntrospector } from 'kysely'
+
+export class CustomDialect implements Dialect {
+  createDriver(): Driver {
+    return new CustomDriver()
+  }
+
+  createQueryCompiler(): QueryCompiler {
+    return new CustomQueryCompiler()
+  }
+
+  createAdapter(): DialectAdapter {
+    return new CustomAdapter()
+  }
+
+  createIntrospector(db: Kysely<any>): DatabaseIntrospector {
+    return new CustomIntrospector(db)
+  }
+}
+```
+
+Then use it when creating a Kysely instance:
+
+```typescript
+import { Kysely } from 'kysely'
+import { CustomDialect } from './custom-dialect'
+
+const db = new Kysely<Database>({
+  dialect: new CustomDialect()
+})
+```

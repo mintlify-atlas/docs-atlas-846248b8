@@ -1,0 +1,379 @@
+---
+title: Migrations
+description: Manage database schema changes over time with Kysely's migration system
+---
+
+Kysely's `Migrator` class provides a robust system for managing database schema changes. Migrations help you version control your database schema and apply changes consistently across environments.
+
+## Basic Setup
+
+<Steps>
+  <Step title="Create a Migrator instance">
+    ```typescript
+    import { promises as fs } from 'node:fs'
+    import path from 'node:path'
+    import { Kysely, Migrator, FileMigrationProvider } from 'kysely'
+
+    const migrator = new Migrator({
+      db,
+      provider: new FileMigrationProvider({
+        fs,
+        path,
+        migrationFolder: 'src/migrations'
+      })
+    })
+    ```
+  </Step>
+
+  <Step title="Create your first migration file">
+    Create a file `src/migrations/001_initial_schema.ts`:
+
+    ```typescript
+    import { Kysely, sql } from 'kysely'
+
+    export async function up(db: Kysely<any>): Promise<void> {
+      await db.schema
+        .createTable('person')
+        .addColumn('id', 'serial', (col) => col.primaryKey())
+        .addColumn('first_name', 'varchar(50)', (col) => col.notNull())
+        .addColumn('last_name', 'varchar(50)', (col) => col.notNull())
+        .addColumn('email', 'varchar(255)', (col) => col.unique())
+        .addColumn('created_at', 'timestamp', (col) =>
+          col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`)
+        )
+        .execute()
+
+      await db.schema
+        .createIndex('person_email_index')
+        .on('person')
+        .column('email')
+        .execute()
+    }
+
+    export async function down(db: Kysely<any>): Promise<void> {
+      await db.schema.dropTable('person').execute()
+    }
+    ```
+  </Step>
+
+  <Step title="Run migrations">
+    ```typescript
+    const { error, results } = await migrator.migrateToLatest()
+
+    results?.forEach((result) => {
+      if (result.status === 'Success') {
+        console.log(`✓ ${result.migrationName} executed successfully`)
+      } else if (result.status === 'Error') {
+        console.error(`✗ ${result.migrationName} failed`)
+      }
+    })
+
+    if (error) {
+      console.error('Migration failed:', error)
+      process.exit(1)
+    }
+    ```
+  </Step>
+</Steps>
+
+## Migration Structure
+
+### The Migration Interface
+
+Each migration file must export `up` and optionally `down` functions:
+
+```typescript
+import { Kysely } from 'kysely'
+
+export async function up(db: Kysely<any>): Promise<void> {
+  // Apply the migration
+}
+
+export async function down(db: Kysely<any>): Promise<void> {
+  // Revert the migration (optional)
+}
+```
+
+<Note>
+If you don't provide a `down` method, the migration will be skipped when migrating down.
+</Note>
+
+### Naming Conventions
+
+Migration files are executed in **alphabetical order**. Common naming patterns:
+
+- `001_initial_schema.ts`, `002_add_users.ts` (numbered)
+- `2024_03_01_create_posts.ts` (dated)
+- `20240301120000_add_comments.ts` (timestamp)
+
+## Migration Operations
+
+### Migrate to Latest
+
+Run all pending migrations:
+
+```typescript
+const { error, results } = await migrator.migrateToLatest()
+```
+
+### Migrate to Specific Version
+
+Migrate up or down to a specific migration:
+
+```typescript
+// Migrate to specific migration
+await migrator.migrateTo('002_add_users')
+
+// Migrate all the way down
+import { NO_MIGRATIONS } from 'kysely'
+await migrator.migrateTo(NO_MIGRATIONS)
+```
+
+### Migrate One Step
+
+Migrate one step up or down:
+
+```typescript
+// One step up
+await migrator.migrateUp()
+
+// One step down
+await migrator.migrateDown()
+```
+
+### Check Migration Status
+
+Get information about all migrations:
+
+```typescript
+const migrations = await migrator.getMigrations()
+
+migrations.forEach((migration) => {
+  console.log(`${migration.name}: ${
+    migration.executedAt ? `executed at ${migration.executedAt}` : 'pending'
+  }`)
+})
+```
+
+## Configuration Options
+
+### Custom Migration Table Name
+
+```typescript
+const migrator = new Migrator({
+  db,
+  provider: new FileMigrationProvider({ fs, path, migrationFolder: 'migrations' }),
+  migrationTableName: 'my_migrations',
+  migrationLockTableName: 'my_migration_lock'
+})
+```
+
+<Warning>
+Always use the same table names from the beginning of your project. Changing them will cause Kysely to create new tables and attempt to re-run migrations.
+</Warning>
+
+### Migration Schema
+
+On PostgreSQL and MSSQL, specify a schema for migration tables:
+
+```typescript
+const migrator = new Migrator({
+  db,
+  provider: new FileMigrationProvider({ fs, path, migrationFolder: 'migrations' }),
+  migrationTableSchema: 'public'
+})
+```
+
+### Allow Unordered Migrations
+
+By default, migrations must be run in exact alphabetical order. To allow flexibility:
+
+```typescript
+const migrator = new Migrator({
+  db,
+  provider: new FileMigrationProvider({ fs, path, migrationFolder: 'migrations' }),
+  allowUnorderedMigrations: true
+})
+```
+
+<Warning>
+Enabling this option can lead to inconsistent database states across environments. Use with caution.
+</Warning>
+
+### Disable Transactions
+
+Some migrations may require running outside of transactions:
+
+```typescript
+const migrator = new Migrator({
+  db,
+  provider: new FileMigrationProvider({ fs, path, migrationFolder: 'migrations' }),
+  disableTransactions: true
+})
+```
+
+## Error Handling
+
+Migration methods never throw errors. Instead, they return a `MigrationResultSet`:
+
+```typescript
+const { error, results } = await migrator.migrateToLatest()
+
+if (error) {
+  console.error('Migration failed:', error)
+  
+  // Find which migration failed
+  const failedMigration = results?.find(r => r.status === 'Error')
+  if (failedMigration) {
+    console.error(`Failed at: ${failedMigration.migrationName}`)
+  }
+  
+  process.exit(1)
+}
+
+// Check individual results
+results?.forEach((result) => {
+  console.log(`${result.migrationName}: ${result.status}`)
+  // status can be: 'Success', 'Error', or 'NotExecuted'
+})
+```
+
+## Migration Examples
+
+### Creating Tables
+
+```typescript
+export async function up(db: Kysely<any>): Promise<void> {
+  await db.schema
+    .createTable('post')
+    .addColumn('id', 'serial', (col) => col.primaryKey())
+    .addColumn('title', 'varchar(255)', (col) => col.notNull())
+    .addColumn('content', 'text')
+    .addColumn('author_id', 'integer', (col) =>
+      col.references('person.id').onDelete('cascade').notNull()
+    )
+    .addColumn('created_at', 'timestamp', (col) =>
+      col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`)
+    )
+    .execute()
+}
+
+export async function down(db: Kysely<any>): Promise<void> {
+  await db.schema.dropTable('post').execute()
+}
+```
+
+### Adding Columns
+
+```typescript
+export async function up(db: Kysely<any>): Promise<void> {
+  await db.schema
+    .alterTable('person')
+    .addColumn('bio', 'text')
+    .execute()
+
+  await db.schema
+    .alterTable('person')
+    .addColumn('avatar_url', 'varchar(255)')
+    .execute()
+}
+
+export async function down(db: Kysely<any>): Promise<void> {
+  await db.schema
+    .alterTable('person')
+    .dropColumn('bio')
+    .execute()
+
+  await db.schema
+    .alterTable('person')
+    .dropColumn('avatar_url')
+    .execute()
+}
+```
+
+### Adding Indexes
+
+```typescript
+export async function up(db: Kysely<any>): Promise<void> {
+  await db.schema
+    .createIndex('post_author_created_index')
+    .on('post')
+    .columns(['author_id', 'created_at'])
+    .execute()
+}
+
+export async function down(db: Kysely<any>): Promise<void> {
+  await db.schema
+    .dropIndex('post_author_created_index')
+    .on('post')
+    .execute()
+}
+```
+
+### Data Migrations
+
+```typescript
+export async function up(db: Kysely<any>): Promise<void> {
+  // Add new column
+  await db.schema
+    .alterTable('person')
+    .addColumn('full_name', 'varchar(255)')
+    .execute()
+
+  // Populate with data
+  await db
+    .updateTable('person')
+    .set({
+      full_name: sql`concat(first_name, ' ', last_name)`
+    })
+    .execute()
+
+  // Make it non-nullable
+  await db.schema
+    .alterTable('person')
+    .alterColumn('full_name', (col) => col.setNotNull())
+    .execute()
+}
+
+export async function down(db: Kysely<any>): Promise<void> {
+  await db.schema
+    .alterTable('person')
+    .dropColumn('full_name')
+    .execute()
+}
+```
+
+## Custom Migration Providers
+
+Implement your own `MigrationProvider` to load migrations from anywhere:
+
+```typescript
+import { MigrationProvider, Migration } from 'kysely'
+
+class CustomMigrationProvider implements MigrationProvider {
+  async getMigrations(): Promise<Record<string, Migration>> {
+    // Return migrations from database, API, etc.
+    return {
+      '001_initial': {
+        up: async (db) => { /* ... */ },
+        down: async (db) => { /* ... */ }
+      }
+    }
+  }
+}
+
+const migrator = new Migrator({
+  db,
+  provider: new CustomMigrationProvider()
+})
+```
+
+## Best Practices
+
+1. **Always test migrations** - Test both `up` and `down` migrations in development
+2. **Keep migrations small** - Each migration should represent one logical change
+3. **Never modify executed migrations** - Create new migrations to fix issues
+4. **Use transactions** - Most DDL operations are automatically wrapped in transactions
+5. **Handle data carefully** - Back up data before running destructive migrations
+6. **Version control** - Commit migration files to your repository
+7. **Document complex changes** - Add comments explaining non-obvious migrations

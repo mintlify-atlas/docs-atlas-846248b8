@@ -1,122 +1,153 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Kysely",
+  "theme": "sequoia",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#0891B2",
+    "light": "#22D3EE",
+    "dark": "#0E7490"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/kysely-org/kysely"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/kysely-org/kysely",
+      "discord": "https://discord.gg/xyBJ3GwvAm"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
+              "introduction",
+              "installation",
+              "quickstart"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "core-concepts/database-types",
+              "core-concepts/query-building",
+              "core-concepts/type-safety",
+              "core-concepts/dialects",
+              "core-concepts/plugins"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Query Operations",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "operations/select",
+              "operations/insert",
+              "operations/update",
+              "operations/delete",
+              "operations/joins",
+              "operations/transactions",
+              "operations/raw-sql"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Schema & Migrations",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "schema/creating-tables",
+              "schema/altering-tables",
+              "schema/migrations",
+              "schema/introspection"
+            ]
+          },
+          {
+            "group": "Recipes & Guides",
+            "pages": [
+              "recipes/relations",
+              "recipes/dynamic-queries",
+              "recipes/reusable-helpers",
+              "recipes/data-types",
+              "recipes/conditional-selects",
+              "recipes/expressions"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Core Classes",
             "pages": [
-              "api-reference/introduction"
+              "api/kysely",
+              "api/select-query-builder",
+              "api/insert-query-builder",
+              "api/update-query-builder",
+              "api/delete-query-builder"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Expression Builders",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/expression-builder",
+              "api/raw-builder",
+              "api/aggregate-function-builder",
+              "api/case-builder",
+              "api/json-path-builder"
+            ]
+          },
+          {
+            "group": "Schema Builders",
+            "pages": [
+              "api/schema",
+              "api/create-table-builder",
+              "api/alter-table-builder",
+              "api/column-definition-builder"
+            ]
+          },
+          {
+            "group": "Dialects & Drivers",
+            "pages": [
+              "api/dialects/overview",
+              "api/dialects/postgresql",
+              "api/dialects/mysql",
+              "api/dialects/sqlite",
+              "api/dialects/mssql"
+            ]
+          },
+          {
+            "group": "Plugins",
+            "pages": [
+              "api/plugins/overview",
+              "api/plugins/camel-case",
+              "api/plugins/with-schema",
+              "api/plugins/parse-json-results",
+              "api/plugins/deduplicate-joins",
+              "api/plugins/custom-plugins"
+            ]
+          },
+          {
+            "group": "Migrations",
+            "pages": [
+              "api/migrator",
+              "api/migration-provider"
+            ]
+          },
+          {
+            "group": "Types & Utilities",
+            "pages": [
+              "api/types/column-type",
+              "api/types/generated",
+              "api/types/selectable",
+              "api/types/insertable",
+              "api/types/updateable"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

@@ -1,0 +1,355 @@
+---
+title: Query Building
+description: Learn how Kysely's builder pattern and method chaining enables type-safe, composable SQL queries
+---
+
+Kysely uses a fluent builder pattern that allows you to construct SQL queries through method chaining. Each method returns a new query builder instance, making queries immutable and composable.
+
+## The Builder Pattern
+
+Every query in Kysely starts from the `Kysely` instance and builds up through method chaining:
+
+```typescript
+import { Kysely, SqliteDialect } from 'kysely'
+import Database from 'better-sqlite3'
+
+interface DB {
+  person: {
+    id: Generated<number>
+    first_name: string
+    last_name: string | null
+    age: number
+  }
+}
+
+const db = new Kysely<DB>({
+  dialect: new SqliteDialect({
+    database: new Database(':memory:'),
+  })
+})
+
+// Simple SELECT query
+const people = await db
+  .selectFrom('person')
+  .select(['id', 'first_name', 'last_name'])
+  .execute()
+```
+
+## Immutability and Composability
+
+Each method returns a new query builder instance, leaving the original unchanged:
+
+```typescript
+const baseQuery = db
+  .selectFrom('person')
+  .select(['id', 'first_name'])
+
+// These don't modify baseQuery
+const adults = baseQuery.where('age', '>=', 18)
+const seniors = baseQuery.where('age', '>=', 65)
+
+// baseQuery is still unchanged
+const everyone = await baseQuery.execute()
+```
+
+This immutability makes queries composable and reusable:
+
+```typescript
+function applyPagination<DB, TB extends keyof DB, O>(
+  query: SelectQueryBuilder<DB, TB, O>,
+  page: number,
+  pageSize: number
+) {
+  return query
+    .limit(pageSize)
+    .offset(page * pageSize)
+}
+
+const paginatedQuery = applyPagination(
+  db.selectFrom('person').selectAll(),
+  0,
+  10
+)
+```
+
+## SELECT Queries
+
+### Basic Selection
+
+```typescript
+// Select specific columns
+const result = await db
+  .selectFrom('person')
+  .select(['first_name', 'last_name'])
+  .execute()
+
+// Select all columns
+const all = await db
+  .selectFrom('person')
+  .selectAll()
+  .execute()
+
+// Select with alias
+const aliased = await db
+  .selectFrom('person')
+  .select(['first_name as firstName', 'last_name as lastName'])
+  .execute()
+```
+
+### WHERE Clauses
+
+```typescript
+// Simple comparison
+await db
+  .selectFrom('person')
+  .selectAll()
+  .where('age', '>', 18)
+  .execute()
+
+// Multiple conditions (AND)
+await db
+  .selectFrom('person')
+  .selectAll()
+  .where('age', '>', 18)
+  .where('first_name', '=', 'Jennifer')
+  .execute()
+
+// OR conditions
+await db
+  .selectFrom('person')
+  .selectAll()
+  .where((eb) => eb.or([
+    eb('age', '<', 18),
+    eb('age', '>', 65)
+  ]))
+  .execute()
+```
+
+### JOINs
+
+```typescript
+interface DB {
+  person: { id: Generated<number>; first_name: string }
+  pet: { id: Generated<number>; name: string; owner_id: number }
+}
+
+// Inner join
+const result = await db
+  .selectFrom('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  .select([
+    'person.id',
+    'person.first_name',
+    'pet.name as pet_name'
+  ])
+  .execute()
+
+// Left join
+await db
+  .selectFrom('person')
+  .leftJoin('pet', 'pet.owner_id', 'person.id')
+  .select(['person.first_name', 'pet.name'])
+  .execute()
+
+// Join with callback for complex conditions
+await db
+  .selectFrom('person')
+  .innerJoin('pet', (join) => join
+    .onRef('pet.owner_id', '=', 'person.id')
+    .on('pet.species', '=', 'dog')
+  )
+  .selectAll()
+  .execute()
+```
+
+### Aggregation and Grouping
+
+```typescript
+const { count } = db.fn
+
+const result = await db
+  .selectFrom('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  .select([
+    'person.id',
+    count('pet.id').as('pet_count')
+  ])
+  .groupBy('person.id')
+  .having((eb) => eb(count('pet.id'), '>', 1))
+  .execute()
+```
+
+## INSERT Queries
+
+```typescript
+// Single insert
+const result = await db
+  .insertInto('person')
+  .values({
+    first_name: 'Jennifer',
+    last_name: 'Aniston',
+    age: 40
+  })
+  .execute()
+
+// Multiple inserts
+await db
+  .insertInto('person')
+  .values([
+    { first_name: 'Jennifer', last_name: 'Aniston', age: 40 },
+    { first_name: 'Arnold', last_name: 'Schwarzenegger', age: 70 }
+  ])
+  .execute()
+
+// Insert with returning (PostgreSQL, SQLite)
+const inserted = await db
+  .insertInto('person')
+  .values({ first_name: 'Jennifer', last_name: 'Aniston', age: 40 })
+  .returningAll()
+  .executeTakeFirst()
+
+// inserted.id, inserted.first_name, etc. are available
+```
+
+## UPDATE Queries
+
+```typescript
+// Update with WHERE
+await db
+  .updateTable('person')
+  .set({ age: 41 })
+  .where('first_name', '=', 'Jennifer')
+  .execute()
+
+// Update with expression
+await db
+  .updateTable('person')
+  .set((eb) => ({
+    age: eb('age', '+', 1)
+  }))
+  .where('id', '=', 1)
+  .execute()
+
+// Update with returning
+const updated = await db
+  .updateTable('person')
+  .set({ age: 41 })
+  .where('id', '=', 1)
+  .returningAll()
+  .executeTakeFirst()
+```
+
+## DELETE Queries
+
+```typescript
+// Delete with WHERE
+await db
+  .deleteFrom('person')
+  .where('age', '<', 18)
+  .execute()
+
+// Delete with multiple conditions
+await db
+  .deleteFrom('person')
+  .where('first_name', '=', 'Jennifer')
+  .where('last_name', '=', 'Aniston')
+  .execute()
+
+// Delete with returning
+const deleted = await db
+  .deleteFrom('person')
+  .where('id', '=', 1)
+  .returningAll()
+  .executeTakeFirst()
+```
+
+## Execution Methods
+
+Kysely provides several methods to execute queries:
+
+```typescript
+// execute() - returns all results
+const all = await db.selectFrom('person').selectAll().execute()
+// QueryResult<Person[]>
+
+// executeTakeFirst() - returns first result or undefined
+const first = await db.selectFrom('person').selectAll().executeTakeFirst()
+// Person | undefined
+
+// executeTakeFirstOrThrow() - returns first result or throws
+const firstOrThrow = await db.selectFrom('person')
+  .selectAll()
+  .executeTakeFirstOrThrow()
+// Person (throws NoResultError if not found)
+```
+
+## Dynamic Queries
+
+Build queries conditionally:
+
+```typescript
+let query = db.selectFrom('person').selectAll()
+
+if (minAge) {
+  query = query.where('age', '>=', minAge)
+}
+
+if (firstName) {
+  query = query.where('first_name', '=', firstName)
+}
+
+const results = await query.execute()
+```
+
+Or use helper functions:
+
+```typescript
+function applyFilters<DB, TB extends keyof DB, O>(
+  query: SelectQueryBuilder<DB, TB, O>,
+  filters: { minAge?: number; firstName?: string }
+) {
+  let result = query
+  
+  if (filters.minAge !== undefined) {
+    result = result.where('age', '>=', filters.minAge)
+  }
+  
+  if (filters.firstName) {
+    result = result.where('first_name', '=', filters.firstName)
+  }
+  
+  return result
+}
+```
+
+## Method Chaining Reference
+
+Common method chains for each query type:
+
+**SELECT**:
+```
+db.selectFrom() → select() → where() → orderBy() → limit() → execute()
+```
+
+**INSERT**:
+```
+db.insertInto() → values() → returning() → execute()
+```
+
+**UPDATE**:
+```
+db.updateTable() → set() → where() → returning() → execute()
+```
+
+**DELETE**:
+```
+db.deleteFrom() → where() → returning() → execute()
+```
+
+<Tip>
+  Every query builder method returns a new instance, so you can safely reuse base queries.
+</Tip>
+
+<Note>
+  The type parameter changes as you chain methods, ensuring you can only reference columns and tables that are in scope.
+</Note>

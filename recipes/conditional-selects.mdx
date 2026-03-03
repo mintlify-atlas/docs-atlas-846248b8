@@ -1,0 +1,226 @@
+---
+title: "Conditional Select Statements"
+description: "Learn how to select fields conditionally based on runtime conditions"
+---
+
+Sometimes you need to select fields based on runtime conditions. For example:
+
+```ts
+async function getPerson(id: number, withLastName: boolean) {}
+```
+
+If `withLastName` is true, the person object should include the `last_name` property, otherwise it shouldn't.
+
+## The wrong approach
+
+Your first instinct might be to do this:
+
+```ts
+async function getPerson(id: number, withLastName: boolean) {
+  let query = db.selectFrom('person').select('first_name').where('id', '=', id)
+  
+  if (withLastName) {
+    // ❌ The type of `query` doesn't change here
+    query = query.select(['last_name', sql.val('person_with_last_name' as const).as('kind')])
+  }
+  
+  // ❌ Wrong return type { first_name: string, kind: 'person' }
+  return await query.select(sql.val('person' as const).as('kind')).executeTakeFirstOrThrow()
+}
+```
+
+<Warning>
+While this compiles, the result type would be `{ first_name: string, kind: 'person' }` without the `last_name` column, which is wrong.
+</Warning>
+
+### Why this fails
+
+What happens:
+1. The type of `query` when created is `A`
+2. The type with `last_name` selection is `B` (extends `A` plus new selection info)
+3. When you assign type `B` to `query` inside the `if`, it gets downcast to `A`
+
+<Info>
+You **can** use this pattern for conditional `where`, `groupBy`, `orderBy` etc. that don't change the query builder type. But it doesn't work with `select`, `returning`, `innerJoin` etc. that **do** change the type.
+</Info>
+
+## Solution 1: Separate branches
+
+For simple cases with one condition, use separate return statements:
+
+```ts
+async function getPerson(id: number, withLastName: boolean) {
+  const query = db
+    .selectFrom("person")
+    .select("first_name")
+    .where("id", "=", id)
+  
+  if (withLastName) {
+    // ✅ Return type: { first_name: string, last_name: string, kind: 'person_with_last_name' }
+    return await query
+      .select([
+        "last_name",
+        sql.val("person_with_last_name").as("kind"),
+      ])
+      .executeTakeFirstOrThrow()
+  }
+  
+  // ✅ Return type: { first_name: string, kind: 'person' }
+  return await query
+    .select(sql.val("person").as("kind"))
+    .executeTakeFirstOrThrow()
+}
+```
+
+<Warning>
+This works for single conditions, but with multiple conditions the code explodes. You need a separate branch for every combination to maintain correct types.
+</Warning>
+
+## Solution 2: Using $if (recommended)
+
+The `$if` method provides type-safe conditional selections:
+
+```ts
+async function getPerson(id: number, withLastName: boolean) {
+  // ✅ Return type: { first_name: string, last_name?: string }
+  return await db
+    .selectFrom("person")
+    .select("first_name")
+    .$if(withLastName, (qb) => qb.select("last_name"))
+    .where("id", "=", id)
+    .executeTakeFirstOrThrow()
+}
+```
+
+### How $if works
+
+Selections added inside the `$if` callback are added as **optional fields** to the output type. This is because Kysely can't know if the selections were actually made before running the code.
+
+<Tip>
+This is the recommended approach for most use cases as it maintains type safety while being concise.
+</Tip>
+
+## Multiple conditions
+
+`$if` shines when you have multiple conditions:
+
+```ts
+async function getPerson(
+  id: number,
+  withLastName: boolean,
+  withEmail: boolean,
+  withAge: boolean
+) {
+  return await db
+    .selectFrom("person")
+    .select("first_name")
+    .$if(withLastName, (qb) => qb.select("last_name"))
+    .$if(withEmail, (qb) => qb.select("email"))
+    .$if(withAge, (qb) => qb.select("age"))
+    .where("id", "=", id)
+    .executeTakeFirstOrThrow()
+}
+
+// Return type:
+// {
+//   first_name: string
+//   last_name?: string
+//   email?: string
+//   age?: number
+// }
+```
+
+## Conditional joins
+
+You can also use `$if` for conditional joins:
+
+```ts
+async function getPersons(includePets: boolean) {
+  return await db
+    .selectFrom('person')
+    .selectAll('person')
+    .$if(includePets, (qb) => qb
+      .innerJoin('pet', 'pet.owner_id', 'person.id')
+      .select(['pet.name as pet_name', 'pet.species'])
+    )
+    .execute()
+}
+```
+
+<Warning>
+Be careful with duplicate joins when using `$if` with joins. See the [DeduplicateJoinsPlugin](/api/plugins/deduplicate-joins) for solutions.
+</Warning>
+
+## Limitations of $if
+
+A downside of `$if` is that it cannot result in discriminated union return types:
+
+```ts
+// With $if, kind would be: 'person' | 'person_with_last_name'
+// Rather than being tied to whether last_name exists
+
+async function getPerson(id: number, withLastName: boolean) {
+  return await db
+    .selectFrom("person")
+    .select("first_name")
+    .$if(withLastName, (qb) => qb.select([
+      "last_name",
+      sql.val("person_with_last_name").as("kind")
+    ]))
+    .$if(!withLastName, (qb) => qb.select(
+      sql.val("person").as("kind")
+    ))
+    .where("id", "=", id)
+    .executeTakeFirstOrThrow()
+}
+
+// Type: { first_name: string, last_name?: string, kind?: 'person' | 'person_with_last_name' }
+// Not: { first_name: string, last_name: string, kind: 'person_with_last_name' } |
+//      { first_name: string, kind: 'person' }
+```
+
+For discriminated unions, use the separate branches approach (Solution 1).
+
+## Combining with dynamic queries
+
+You can combine `$if` with the dynamic module for powerful conditional queries:
+
+```ts
+type SortColumn = 'first_name' | 'last_name' | 'created_at'
+
+async function searchPersons(
+  includeEmail: boolean,
+  sortBy?: SortColumn
+) {
+  const { ref } = db.dynamic
+  
+  return await db
+    .selectFrom('person')
+    .select(['first_name', 'last_name'])
+    .$if(includeEmail, (qb) => qb.select('email'))
+    .$if(sortBy !== undefined, (qb) => 
+      qb.orderBy(ref<SortColumn>(sortBy!))
+    )
+    .execute()
+}
+```
+
+## Best practices
+
+<Steps>
+<Step title="Use $if for optional fields">
+When you need optional fields in your result type, use `$if`.
+</Step>
+
+<Step title="Use branches for discriminated unions">
+When you need discriminated union types, use separate if/else branches.
+</Step>
+
+<Step title="Chain multiple $if calls">
+Don't try to combine multiple conditions in one `$if` — chain them instead.
+</Step>
+
+<Step title="Consider query performance">
+Remember that conditional selections still result in a single SQL query with optimal performance.
+</Step>
+</Steps>

@@ -1,0 +1,332 @@
+---
+title: Transactions
+description: Learn how to use transactions in Kysely to ensure atomic database operations with type-safe transaction handling.
+---
+
+Transactions allow you to execute multiple database operations atomically. If any operation fails, all changes are rolled back. Kysely provides two ways to work with transactions: automatic transactions and controlled transactions.
+
+## Automatic Transactions
+
+The `transaction()` method provides automatic transaction management. The transaction is automatically committed if the callback succeeds, or rolled back if an exception is thrown.
+
+### Simple Transaction
+
+This example inserts two rows in a transaction:
+
+```typescript
+const catto = await db.transaction().execute(async (trx) => {
+  const jennifer = await trx.insertInto('person')
+    .values({
+      first_name: 'Jennifer',
+      last_name: 'Aniston',
+      age: 40,
+    })
+    .returning('id')
+    .executeTakeFirstOrThrow()
+
+  return await trx.insertInto('pet')
+    .values({
+      owner_id: jennifer.id,
+      name: 'Catto',
+      species: 'cat',
+      is_favorite: false,
+    })
+    .returningAll()
+    .executeTakeFirst()
+})
+```
+
+If an exception is thrown inside the callback:
+1. The exception is caught
+2. The transaction is rolled back
+3. The exception is thrown again
+
+Otherwise the transaction is committed.
+
+### Setting Isolation Level
+
+You can configure the transaction isolation level:
+
+```typescript
+await db
+  .transaction()
+  .setIsolationLevel('serializable')
+  .execute(async (trx) => {
+    await doStuff(trx)
+  })
+
+async function doStuff(kysely: typeof db) {
+  // ...
+}
+```
+
+Available isolation levels:
+- `'read uncommitted'`
+- `'read committed'`
+- `'repeatable read'`
+- `'serializable'`
+- `'snapshot'`
+
+## Controlled Transactions
+
+Controlled transactions give you manual control over commit and rollback operations, and allow you to work with savepoints.
+
+### Manual Commit and Rollback
+
+A controlled transaction allows you to commit and rollback manually:
+
+```typescript
+const trx = await db.startTransaction().execute()
+
+try {
+  const jennifer = await trx.insertInto('person')
+    .values({
+      first_name: 'Jennifer',
+      last_name: 'Aniston',
+      age: 40,
+    })
+    .returning('id')
+    .executeTakeFirstOrThrow()
+
+  const catto = await trx.insertInto('pet')
+    .values({
+      owner_id: jennifer.id,
+      name: 'Catto',
+      species: 'cat',
+      is_favorite: false,
+    })
+    .returningAll()
+    .executeTakeFirstOrThrow()
+
+  await trx.commit().execute()
+
+  // ...
+} catch (error) {
+  await trx.rollback().execute()
+}
+```
+
+### Using Savepoints
+
+Savepoints allow you to create checkpoints within a transaction that you can roll back to:
+
+```typescript
+const trx = await db.startTransaction().execute()
+
+try {
+  const jennifer = await trx
+    .insertInto('person')
+    .values({
+      first_name: 'Jennifer',
+      last_name: 'Aniston',
+      age: 40,
+    })
+    .returning('id')
+    .executeTakeFirstOrThrow()
+
+  const trxAfterJennifer = await trx.savepoint('after_jennifer').execute()
+
+  try {
+    const catto = await trxAfterJennifer
+      .insertInto('pet')
+      .values({
+        owner_id: jennifer.id,
+        name: 'Catto',
+        species: 'cat',
+      })
+      .returning('id')
+      .executeTakeFirstOrThrow()
+
+    await trxAfterJennifer
+      .insertInto('toy')
+      .values({ name: 'Bone', price: 1.99, pet_id: catto.id })
+      .execute()
+  } catch (error) {
+    await trxAfterJennifer.rollbackToSavepoint('after_jennifer').execute()
+  }
+
+  await trxAfterJennifer.releaseSavepoint('after_jennifer').execute()
+
+  await trx.insertInto('audit').values({ action: 'added Jennifer' }).execute()
+
+  await trx.commit().execute()
+} catch (error) {
+  await trx.rollback().execute()
+}
+```
+
+### Setting Isolation Level
+
+You can set the isolation level for controlled transactions:
+
+```typescript
+const trx = await db
+  .startTransaction()
+  .setIsolationLevel('serializable')
+  .execute()
+
+try {
+  // Your transaction code here
+  await trx.commit().execute()
+} catch (error) {
+  await trx.rollback().execute()
+}
+```
+
+## Connection Pooling
+
+The `connection()` method provides a Kysely instance bound to a single database connection:
+
+```typescript
+await db
+  .connection()
+  .execute(async (db) => {
+    // `db` is an instance of `Kysely` that's bound to a single
+    // database connection. All queries executed through `db` use
+    // the same connection.
+    await doStuff(db)
+  })
+
+async function doStuff(kysely: typeof db) {
+  // ...
+}
+```
+
+This is useful when you need to ensure multiple queries use the same connection without a transaction.
+
+## Transaction Object
+
+The transaction object passed to the callback is of type `Transaction<DB>`, which extends `Kysely<DB>`. This means you can use all the same query building methods:
+
+```typescript
+const result = await db.transaction().execute(async (trx) => {
+  // All Kysely methods are available
+  await trx.selectFrom('person').selectAll().execute()
+  await trx.insertInto('person').values({ ... }).execute()
+  await trx.updateTable('person').set({ ... }).where(...).execute()
+  await trx.deleteFrom('person').where(...).execute()
+  
+  // Schema operations
+  await trx.schema.createTable('temp').addColumn(...).execute()
+  
+  return someResult
+})
+```
+
+## Nested Transactions
+
+Kysely doesn't support true nested transactions, but you can use savepoints to achieve similar functionality:
+
+```typescript
+await db.transaction().execute(async (trx) => {
+  // First operation
+  await trx.insertInto('person').values({ ... }).execute()
+  
+  // Create a savepoint for "nested" transaction
+  const innerTrx = await trx.savepoint('inner').execute()
+  
+  try {
+    await innerTrx.insertInto('pet').values({ ... }).execute()
+    await innerTrx.releaseSavepoint('inner').execute()
+  } catch (error) {
+    await innerTrx.rollbackToSavepoint('inner').execute()
+  }
+  
+  // Continue with outer transaction
+  await trx.insertInto('toy').values({ ... }).execute()
+})
+```
+
+## Transaction Lifecycle
+
+Once a controlled transaction is committed or rolled back, it cannot be used anymore. All queries will throw an error:
+
+```typescript
+const trx = await db.startTransaction().execute()
+
+await trx.commit().execute()
+
+// This will throw an error!
+try {
+  await trx.selectFrom('person').selectAll().execute()
+} catch (error) {
+  console.error('Cannot use transaction after commit')
+}
+```
+
+## Best Practices
+
+### Keep Transactions Short
+
+Keep transactions as short as possible to minimize lock contention:
+
+```typescript
+// Good: Short transaction
+await db.transaction().execute(async (trx) => {
+  await trx.insertInto('person').values(person).execute()
+  await trx.insertInto('pet').values(pet).execute()
+})
+
+// Bad: Long transaction with non-DB operations
+await db.transaction().execute(async (trx) => {
+  await trx.insertInto('person').values(person).execute()
+  await sendEmail(person.email) // Don't do this in a transaction!
+  await trx.insertInto('pet').values(pet).execute()
+})
+```
+
+### Use Appropriate Isolation Levels
+
+Choose the lowest isolation level that meets your requirements:
+
+```typescript
+// For most cases, read committed is sufficient
+await db.transaction()
+  .setIsolationLevel('read committed')
+  .execute(async (trx) => { ... })
+
+// Use serializable only when necessary
+await db.transaction()
+  .setIsolationLevel('serializable')
+  .execute(async (trx) => { ... })
+```
+
+### Handle Errors Properly
+
+Always handle errors in controlled transactions:
+
+```typescript
+const trx = await db.startTransaction().execute()
+
+try {
+  // Your operations
+  await trx.commit().execute()
+} catch (error) {
+  await trx.rollback().execute()
+  throw error // Re-throw after rollback
+}
+```
+
+## API Reference
+
+### Automatic Transactions
+
+- `db.transaction()` - Create a transaction builder
+- `.setIsolationLevel(level)` - Set isolation level
+- `.execute(callback)` - Execute the transaction
+
+### Controlled Transactions
+
+- `db.startTransaction()` - Create a controlled transaction builder
+- `.setIsolationLevel(level)` - Set isolation level
+- `.execute()` - Start the transaction
+- `trx.commit()` - Commit the transaction
+- `trx.rollback()` - Rollback the transaction
+- `trx.savepoint(name)` - Create a savepoint
+- `trx.releaseSavepoint(name)` - Release a savepoint
+- `trx.rollbackToSavepoint(name)` - Rollback to a savepoint
+
+### Connection Pooling
+
+- `db.connection()` - Create a connection builder
+- `.execute(callback)` - Execute with a single connection

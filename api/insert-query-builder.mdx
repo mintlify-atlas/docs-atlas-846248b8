@@ -1,0 +1,516 @@
+---
+title: 'InsertQueryBuilder'
+description: 'Build and execute INSERT queries'
+---
+
+# InsertQueryBuilder
+
+Builder for constructing INSERT queries with type-safe value insertion.
+
+## Type Parameters
+
+- `DB` - The database schema type
+- `TB` - The table name being inserted into
+- `O` - The output type (InsertResult or custom with returning)
+
+## Methods
+
+### values
+
+```ts
+values(
+  insert: InsertExpression<DB, TB>
+): InsertQueryBuilder<DB, TB, O>
+```
+
+Sets the values to insert. Takes an object whose keys are column names and values are values to insert.
+
+You must provide all fields you haven't explicitly marked as nullable or optional using `Generated` or `ColumnType`.
+
+**Examples:**
+
+Insert a single row:
+
+```ts
+const result = await db
+  .insertInto('person')
+  .values({
+    first_name: 'Jennifer',
+    last_name: 'Aniston',
+    age: 40
+  })
+  .executeTakeFirst()
+
+console.log(result.insertId)
+```
+
+Insert multiple rows (PostgreSQL):
+
+```ts
+await db
+  .insertInto('person')
+  .values([{
+    first_name: 'Jennifer',
+    last_name: 'Aniston',
+    age: 40,
+  }, {
+    first_name: 'Arnold',
+    last_name: 'Schwarzenegger',
+    age: 70,
+  }])
+  .execute()
+```
+
+Complex values with expressions:
+
+```ts
+import { sql } from 'kysely'
+
+const ani = "Ani"
+const ston = "ston"
+
+const result = await db
+  .insertInto('person')
+  .values(({ ref, selectFrom, fn }) => ({
+    first_name: 'Jennifer',
+    last_name: sql<string>`concat(${ani}, ${ston})`,
+    middle_name: ref('first_name'),
+    age: selectFrom('person')
+      .select(fn.avg<number>('age').as('avg_age')),
+  }))
+  .executeTakeFirst()
+```
+
+### columns
+
+```ts
+columns(
+  columns: ReadonlyArray<keyof DB[TB] & string>
+): InsertQueryBuilder<DB, TB, O>
+```
+
+Sets the columns to insert.
+
+The `values` method sets both columns and values. Use this method when using `expression` to insert from a select query.
+
+**Example:**
+
+```ts
+await db.insertInto('person')
+  .columns(['first_name'])
+  .expression((eb) => eb.selectFrom('pet').select('pet.name'))
+  .execute()
+```
+
+### expression
+
+```ts
+expression(
+  expression: ExpressionOrFactory<DB, TB, any>
+): InsertQueryBuilder<DB, TB, O>
+```
+
+Insert an arbitrary expression, such as the result of a select query.
+
+**Example:**
+
+```ts
+const result = await db.insertInto('person')
+  .columns(['first_name', 'last_name', 'age'])
+  .expression((eb) => eb
+    .selectFrom('pet')
+    .select((eb) => [
+      'pet.name',
+      eb.val('Petson').as('last_name'),
+      eb.lit(7).as('age'),
+    ])
+  )
+  .execute()
+```
+
+### defaultValues
+
+```ts
+defaultValues(): InsertQueryBuilder<DB, TB, O>
+```
+
+Creates an `insert into "person" default values` query.
+
+**Example:**
+
+```ts
+await db.insertInto('person')
+  .defaultValues()
+  .execute()
+```
+
+### returning
+
+```ts
+returning<SE extends SelectExpression<DB, TB>>(
+  selection: SE
+): InsertQueryBuilder<DB, TB, ReturningRow<DB, TB, O, SE>>
+
+returning<SE extends SelectExpression<DB, TB>>(
+  selections: ReadonlyArray<SE>
+): InsertQueryBuilder<DB, TB, ReturningRow<DB, TB, O, SE>>
+
+returning<CB extends SelectCallback<DB, TB>>(
+  callback: CB
+): InsertQueryBuilder<DB, TB, ReturningCallbackRow<DB, TB, O, CB>>
+```
+
+Adds a RETURNING clause to the query (supported on PostgreSQL, SQLite, MS SQL Server).
+
+**Example:**
+
+```ts
+const result = await db
+  .insertInto('person')
+  .values({
+    first_name: 'Jennifer',
+    last_name: 'Aniston',
+    age: 40,
+  })
+  .returning(['id', 'first_name as name'])
+  .executeTakeFirstOrThrow()
+```
+
+### returningAll
+
+```ts
+returningAll(): InsertQueryBuilder<DB, TB, Selectable<DB[TB]>>
+```
+
+Adds a `returning *` clause to the query.
+
+**Example:**
+
+```ts
+const person = await db
+  .insertInto('person')
+  .values({ first_name: 'Jennifer', last_name: 'Aniston' })
+  .returningAll()
+  .executeTakeFirstOrThrow()
+```
+
+### onConflict
+
+```ts
+onConflict(
+  callback: (builder: OnConflictBuilder<DB, TB>) =>
+    OnConflictUpdateBuilder<OnConflictDatabase<DB, TB>, OnConflictTables<TB>> |
+    OnConflictDoNothingBuilder<DB, TB>
+): InsertQueryBuilder<DB, TB, O>
+```
+
+Adds an ON CONFLICT clause (PostgreSQL, SQLite).
+
+**Examples:**
+
+Update on conflict:
+
+```ts
+await db
+  .insertInto('pet')
+  .values({
+    name: 'Catto',
+    species: 'cat',
+    owner_id: 3,
+  })
+  .onConflict((oc) => oc
+    .column('name')
+    .doUpdateSet({ species: 'hamster' })
+  )
+  .execute()
+```
+
+Do nothing on conflict:
+
+```ts
+await db
+  .insertInto('pet')
+  .values({
+    name: 'Catto',
+    species: 'cat',
+    owner_id: 3,
+  })
+  .onConflict((oc) => oc
+    .column('name')
+    .doNothing()
+  )
+  .execute()
+```
+
+Use constraint name:
+
+```ts
+await db
+  .insertInto('pet')
+  .values({
+    name: 'Catto',
+    species: 'cat',
+    owner_id: 3,
+  })
+  .onConflict((oc) => oc
+    .constraint('pet_name_key')
+    .doUpdateSet({ species: 'hamster' })
+  )
+  .execute()
+```
+
+### onDuplicateKeyUpdate
+
+```ts
+onDuplicateKeyUpdate(
+  update: UpdateObjectExpression<DB, TB, TB>
+): InsertQueryBuilder<DB, TB, O>
+```
+
+Adds ON DUPLICATE KEY UPDATE (MySQL).
+
+**Example:**
+
+```ts
+await db
+  .insertInto('person')
+  .values({
+    id: 1,
+    first_name: 'John',
+    last_name: 'Doe',
+    gender: 'male',
+  })
+  .onDuplicateKeyUpdate({ updated_at: new Date().toISOString() })
+  .execute()
+```
+
+### ignore
+
+```ts
+ignore(): InsertQueryBuilder<DB, TB, O>
+```
+
+Changes an `insert into` query to an `insert ignore into` query (MySQL) or `insert or ignore into` (SQLite).
+
+**Example:**
+
+```ts
+await db.insertInto('person')
+  .ignore()
+  .values({
+    first_name: 'John',
+    last_name: 'Doe',
+    gender: 'female',
+  })
+  .execute()
+```
+
+### orIgnore
+
+```ts
+orIgnore(): InsertQueryBuilder<DB, TB, O>
+```
+
+Changes an `insert into` query to an `insert or ignore into` query (SQLite).
+
+### orReplace
+
+```ts
+orReplace(): InsertQueryBuilder<DB, TB, O>
+```
+
+Changes an `insert into` query to an `insert or replace into` query (SQLite).
+
+### orAbort
+
+```ts
+orAbort(): InsertQueryBuilder<DB, TB, O>
+```
+
+Changes an `insert into` query to an `insert or abort into` query (SQLite).
+
+### orFail
+
+```ts
+orFail(): InsertQueryBuilder<DB, TB, O>
+```
+
+Changes an `insert into` query to an `insert or fail into` query (SQLite).
+
+### orRollback
+
+```ts
+orRollback(): InsertQueryBuilder<DB, TB, O>
+```
+
+Changes an `insert into` query to an `insert or rollback into` query (SQLite).
+
+### top
+
+```ts
+top(
+  expression: number | bigint,
+  modifiers?: 'percent'
+): InsertQueryBuilder<DB, TB, O>
+```
+
+Changes an `insert into` query to an `insert top into` query (MS SQL Server).
+
+**Example:**
+
+```ts
+import { sql } from 'kysely'
+
+await db.insertInto('person')
+  .top(5)
+  .columns(['first_name', 'gender'])
+  .expression(
+    (eb) => eb.selectFrom('pet').select(['name', sql.lit('other').as('gender')])
+  )
+  .execute()
+```
+
+### output
+
+```ts
+output<OE extends OutputExpression<DB, TB, 'inserted'>>(
+  selection: OE
+): InsertQueryBuilder<...>
+
+output<OE extends OutputExpression<DB, TB, 'inserted'>>(
+  selections: readonly OE[]
+): InsertQueryBuilder<...>
+```
+
+Adds an OUTPUT clause (MS SQL Server).
+
+### outputAll
+
+```ts
+outputAll(
+  table: 'inserted'
+): InsertQueryBuilder<DB, TB, ReturningAllRow<DB, TB, O>>
+```
+
+Adds an `output inserted.*` clause (MS SQL Server).
+
+### $call
+
+```ts
+$call<T>(func: (qb: this) => T): T
+```
+
+Simply calls the provided function passing `this` as the only argument.
+
+**Example:**
+
+```ts
+import type { Compilable } from 'kysely'
+
+function log<T extends Compilable>(qb: T): T {
+  console.log(qb.compile())
+  return qb
+}
+
+await db.insertInto('person')
+  .values({ first_name: 'John', last_name: 'Doe', gender: 'male' })
+  .$call(log)
+  .execute()
+```
+
+### $if
+
+```ts
+$if<O2>(
+  condition: boolean,
+  func: (qb: this) => InsertQueryBuilder<any, any, O2>
+): InsertQueryBuilder<...>
+```
+
+Call `func(this)` if `condition` is true.
+
+Especially handy with optional `returning` or `returningAll` calls.
+
+**Example:**
+
+```ts
+async function insertPerson(values: NewPerson, returnLastName: boolean) {
+  return await db
+    .insertInto('person')
+    .values(values)
+    .returning(['id', 'first_name'])
+    .$if(returnLastName, (qb) => qb.returning('last_name'))
+    .executeTakeFirstOrThrow()
+}
+
+// Return type: { id: number, first_name: string, last_name?: string }
+```
+
+### $castTo
+
+```ts
+$castTo<C>(): InsertQueryBuilder<DB, TB, C>
+```
+
+Change the output type of the query.
+
+### $narrowType
+
+```ts
+$narrowType<T>(): InsertQueryBuilder<DB, TB, NarrowPartial<O, T>>
+```
+
+Narrows (parts of) the output type of the query.
+
+### execute
+
+```ts
+async execute(): Promise<SimplifyResult<O>[]>
+```
+
+Executes the query and returns an array of rows.
+
+### executeTakeFirst
+
+```ts
+async executeTakeFirst(): Promise<SimplifySingleResult<O>>
+```
+
+Executes the query and returns the first result or `undefined`.
+
+### executeTakeFirstOrThrow
+
+```ts
+async executeTakeFirstOrThrow(
+  errorConstructor?: NoResultErrorConstructor | ((node: QueryNode) => Error)
+): Promise<SimplifyResult<O>>
+```
+
+Executes the query and returns the first result or throws.
+
+### compile
+
+```ts
+compile(): CompiledQuery<O>
+```
+
+Compiles the query to SQL without executing it.
+
+### stream
+
+```ts
+async *stream(chunkSize?: number): AsyncIterableIterator<O>
+```
+
+Streams the query results.
+
+### explain
+
+```ts
+async explain<ER extends Record<string, any> = Record<string, any>>(
+  format?: ExplainFormat,
+  options?: Expression<any>
+): Promise<ER[]>
+```
+
+Executes an EXPLAIN query.

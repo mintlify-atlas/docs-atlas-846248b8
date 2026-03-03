@@ -1,0 +1,318 @@
+---
+title: CaseBuilder
+description: Builder for SQL CASE expressions and statements in Kysely queries
+---
+
+# CaseBuilder
+
+`CaseBuilder` provides a type-safe way to build SQL `CASE` expressions and statements. It's created by calling `eb.case()` or `eb.case(value)` on an `ExpressionBuilder`.
+
+## Type Parameters
+
+<ParamField path="DB" type="object" required>
+  The database schema type
+</ParamField>
+
+<ParamField path="TB" type="keyof DB" required>
+  The table references available in the current query context
+</ParamField>
+
+<ParamField path="W" type="any" default="unknown">
+  The type being compared in when clauses (when using `case(value)` form)
+</ParamField>
+
+<ParamField path="O" type="any" default="never">
+  The accumulated output type from all then clauses
+</ParamField>
+
+## Methods
+
+### when
+
+Adds a `when` clause to the case statement.
+
+```typescript
+when<
+  RE extends ReferenceExpression<DB, TB>,
+  VE extends OperandValueExpressionOrList<DB, TB, RE>,
+>(
+  lhs: RE,
+  op: ComparisonOperatorExpression,
+  rhs: VE,
+): CaseThenBuilder<DB, TB, W, O>
+
+when(expression: Expression<W>): CaseThenBuilder<DB, TB, W, O>
+
+when(value: W): CaseThenBuilder<DB, TB, W, O>
+```
+
+<ParamField path="lhs" type="ReferenceExpression">
+  Left-hand side column reference (only for `case()` without value)
+</ParamField>
+
+<ParamField path="op" type="ComparisonOperatorExpression">
+  Comparison operator (only for `case()` without value)
+</ParamField>
+
+<ParamField path="rhs" type="OperandValueExpressionOrList">
+  Right-hand side value or expression (only for `case()` without value)
+</ParamField>
+
+<ParamField path="expression" type="Expression">
+  Expression to evaluate
+</ParamField>
+
+<ParamField path="value" type="any">
+  Value to compare against (only for `case(value)` form)
+</ParamField>
+
+A `when` call must be followed by a `then` call.
+
+**Example with `case()`:**
+
+```typescript
+eb.case()
+  .when('gender', '=', 'male')
+  .then('Mr.')
+  .when('gender', '=', 'female')
+  .then('Ms.')
+  .end()
+```
+
+**Example with `case(value)`:**
+
+```typescript
+eb.case('marital_status')
+  .when('single')
+  .then('Ms.')
+  .when('married')
+  .then('Mrs.')
+  .else('Mrs.')
+  .end()
+```
+
+## CaseThenBuilder
+
+Returned by `when()` calls. Provides the `then()` method to specify the result for the when condition.
+
+### then
+
+Adds a `then` clause to the `case` statement.
+
+```typescript
+then<E extends Expression<unknown>>(
+  expression: E,
+): CaseWhenBuilder<DB, TB, W, O | ExtractTypeFromValueExpression<E>>
+
+then<V>(value: V): CaseWhenBuilder<DB, TB, W, O | V>
+```
+
+<ParamField path="expression" type="Expression">
+  Expression to return when the when condition matches
+</ParamField>
+
+<ParamField path="value" type="any">
+  Value to return when the when condition matches
+</ParamField>
+
+A `then` call can be followed by `when`, `else`, `end`, or `endCase` calls.
+
+## CaseWhenBuilder
+
+Returned by `then()` calls. Allows chaining additional `when` clauses or finishing with `else`/`end`.
+
+### when
+
+Adds another `when` clause to the case statement.
+
+```typescript
+when<
+  RE extends ReferenceExpression<DB, TB>,
+  VE extends OperandValueExpressionOrList<DB, TB, RE>,
+>(
+  lhs: RE,
+  op: ComparisonOperatorExpression,
+  rhs: VE,
+): CaseThenBuilder<DB, TB, W, O>
+
+when(expression: Expression<W>): CaseThenBuilder<DB, TB, W, O>
+
+when(value: W): CaseThenBuilder<DB, TB, W, O>
+```
+
+### else
+
+Adds an `else` clause to the `case` statement.
+
+```typescript
+else<E extends Expression<unknown>>(
+  expression: E,
+): CaseEndBuilder<DB, TB, O | ExtractTypeFromValueExpression<E>>
+
+else<V>(value: V): CaseEndBuilder<DB, TB, O | V>
+```
+
+<ParamField path="expression" type="Expression">
+  Expression to return when no when conditions match
+</ParamField>
+
+<ParamField path="value" type="any">
+  Value to return when no when conditions match
+</ParamField>
+
+An `else` call must be followed by an `end` or `endCase` call.
+
+**Example:**
+
+```typescript
+eb.case()
+  .when('gender', '=', 'male')
+  .then('Mr.')
+  .when('gender', '=', 'female')
+  .then('Ms.')
+  .else('Other')
+  .end()
+```
+
+### end
+
+Adds an `end` keyword to the case operator.
+
+```typescript
+end(): ExpressionWrapper<DB, TB, O | null>
+```
+
+`case` operators can only be used as part of a query. For a `case` statement used as part of a stored program, use `endCase` instead.
+
+If no `else` clause is provided, the result type will be nullable (`O | null`).
+
+**Example:**
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .select((eb) => [
+    eb.case()
+      .when('age', '<', 18)
+      .then('minor')
+      .when('age', '>=', 18)
+      .then('adult')
+      .end()
+      .as('age_group')
+  ])
+  .execute()
+```
+
+### endCase
+
+Adds `end case` keywords to the case statement.
+
+```typescript
+endCase(): ExpressionWrapper<DB, TB, O | null>
+```
+
+`case` statements can only be used for flow control in stored programs. For a `case` operator used as part of a query, use `end` instead.
+
+## CaseEndBuilder
+
+Returned by `else()` calls. Only provides `end` and `endCase` methods.
+
+### end
+
+Adds an `end` keyword to the case operator.
+
+```typescript
+end(): ExpressionWrapper<DB, TB, O>
+```
+
+**Example:**
+
+```typescript
+eb.case()
+  .when('gender', '=', 'male')
+  .then('Mr.')
+  .else('Ms.')
+  .end()
+```
+
+### endCase
+
+Adds `end case` keywords to the case statement.
+
+```typescript
+endCase(): ExpressionWrapper<DB, TB, O>
+```
+
+## Complete Example
+
+Kitchen sink example with 2 flavors of `case` operator:
+
+```typescript
+const { title, name } = await db
+  .selectFrom('person')
+  .where('id', '=', 123)
+  .select((eb) => [
+    eb.fn.coalesce('last_name', 'first_name').as('name'),
+    eb
+      .case()
+      .when('gender', '=', 'male')
+      .then('Mr.')
+      .when('gender', '=', 'female')
+      .then(
+        eb
+          .case('marital_status')
+          .when('single')
+          .then('Ms.')
+          .else('Mrs.')
+          .end()
+      )
+      .end()
+      .as('title'),
+  ])
+  .executeTakeFirstOrThrow()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select
+  coalesce("last_name", "first_name") as "name",
+  case
+    when "gender" = $1 then $2
+    when "gender" = $3 then
+      case "marital_status"
+        when $4 then $5
+        else $6
+      end
+  end as "title"
+from "person"
+where "id" = $7
+```
+
+## Type Safety
+
+The `CaseBuilder` maintains type safety throughout the chain:
+
+- When using `case(value)`, the `when` clauses must match the value type
+- The output type `O` accumulates all possible return types from `then` clauses
+- Without an `else` clause, the final type is `O | null`
+- With an `else` clause, the final type includes the else value type
+
+```typescript
+// Type: ExpressionWrapper<DB, TB, 'minor' | 'adult' | null>
+const ageGroup = eb.case()
+  .when('age', '<', 18)
+  .then('minor')
+  .when('age', '>=', 18)
+  .then('adult')
+  .end()
+
+// Type: ExpressionWrapper<DB, TB, 'minor' | 'adult' | 'unknown'>
+const ageGroupWithElse = eb.case()
+  .when('age', '<', 18)
+  .then('minor')
+  .when('age', '>=', 18)
+  .then('adult')
+  .else('unknown')
+  .end()
+```

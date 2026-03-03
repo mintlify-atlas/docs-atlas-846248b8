@@ -1,0 +1,695 @@
+---
+title: ColumnDefinitionBuilder
+description: Builder for defining column properties in Kysely table schemas
+---
+
+The `ColumnDefinitionBuilder` class is used to define column properties when creating or altering tables. It provides a fluent API for specifying constraints, defaults, and other column attributes.
+
+## Methods
+
+### autoIncrement
+
+Adds `auto_increment` or `autoincrement` to the column definition depending on the dialect.
+
+Some dialects like PostgreSQL don't support this. On PostgreSQL you can use the `serial` or `bigserial` data type instead.
+
+```ts
+autoIncrement(): ColumnDefinitionBuilder
+```
+
+<ResponseField name="returns" type="ColumnDefinitionBuilder">
+  A new builder with auto increment enabled
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createTable('person')
+  .addColumn('id', 'integer', col => col.autoIncrement().primaryKey())
+  .execute()
+```
+
+Generated SQL (MySQL):
+
+```sql
+create table `person` (
+  `id` integer primary key auto_increment
+)
+```
+
+### identity
+
+Makes the column an identity column.
+
+This only works on some dialects like MS SQL Server (MSSQL).
+
+For PostgreSQL's `generated always as identity` use [generatedAlwaysAsIdentity](#generatedalwaysasidentity).
+
+```ts
+identity(): ColumnDefinitionBuilder
+```
+
+<ResponseField name="returns" type="ColumnDefinitionBuilder">
+  A new builder with identity enabled
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createTable('person')
+  .addColumn('id', 'integer', col => col.identity().primaryKey())
+  .execute()
+```
+
+Generated SQL (MSSQL):
+
+```sql
+create table "person" (
+  "id" integer identity primary key
+)
+```
+
+### primaryKey
+
+Makes the column the primary key.
+
+If you want to specify a composite primary key use the [CreateTableBuilder.addPrimaryKeyConstraint](/api/create-table-builder#addprimarykeyconstraint) method.
+
+```ts
+primaryKey(): ColumnDefinitionBuilder
+```
+
+<ResponseField name="returns" type="ColumnDefinitionBuilder">
+  A new builder with primary key constraint
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createTable('person')
+  .addColumn('id', 'integer', col => col.primaryKey())
+  .execute()
+```
+
+Generated SQL (MySQL):
+
+```sql
+create table `person` (
+  `id` integer primary key
+)
+```
+
+### references
+
+Adds a foreign key constraint for the column.
+
+If your database engine doesn't support foreign key constraints in the column definition (like MySQL 5) you need to call the table level [CreateTableBuilder.addForeignKeyConstraint](/api/create-table-builder#addforeignkeyconstraint) method instead.
+
+```ts
+references(ref: string): ColumnDefinitionBuilder
+```
+
+<ParamField path="ref" type="string" required>
+  Reference in format `table.column` or `schema.table.column`
+</ParamField>
+
+<ResponseField name="returns" type="ColumnDefinitionBuilder">
+  A new builder with the foreign key reference
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createTable('pet')
+  .addColumn('owner_id', 'integer', (col) => col.references('person.id'))
+  .execute()
+```
+
+Generated SQL (PostgreSQL):
+
+```sql
+create table "pet" (
+  "owner_id" integer references "person" ("id")
+)
+```
+
+### onDelete
+
+Adds an `ON DELETE` constraint for the foreign key column.
+
+If your database engine doesn't support foreign key constraints in the column definition (like MySQL 5) you need to call the table level [CreateTableBuilder.addForeignKeyConstraint](/api/create-table-builder#addforeignkeyconstraint) method instead.
+
+```ts
+onDelete(onDelete: OnModifyForeignAction): ColumnDefinitionBuilder
+```
+
+<ParamField path="onDelete" type="OnModifyForeignAction" required>
+  The action to take on delete (e.g., `cascade`, `set null`, `restrict`, `no action`)
+</ParamField>
+
+<ResponseField name="returns" type="ColumnDefinitionBuilder">
+  A new builder with the on delete action
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createTable('pet')
+  .addColumn(
+    'owner_id',
+    'integer',
+    (col) => col.references('person.id').onDelete('cascade')
+  )
+  .execute()
+```
+
+Generated SQL (PostgreSQL):
+
+```sql
+create table "pet" (
+  "owner_id" integer references "person" ("id") on delete cascade
+)
+```
+
+### onUpdate
+
+Adds an `ON UPDATE` constraint for the foreign key column.
+
+If your database engine doesn't support foreign key constraints in the column definition (like MySQL 5) you need to call the table level [CreateTableBuilder.addForeignKeyConstraint](/api/create-table-builder#addforeignkeyconstraint) method instead.
+
+```ts
+onUpdate(onUpdate: OnModifyForeignAction): ColumnDefinitionBuilder
+```
+
+<ParamField path="onUpdate" type="OnModifyForeignAction" required>
+  The action to take on update (e.g., `cascade`, `set null`, `restrict`, `no action`)
+</ParamField>
+
+<ResponseField name="returns" type="ColumnDefinitionBuilder">
+  A new builder with the on update action
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createTable('pet')
+  .addColumn(
+    'owner_id',
+    'integer',
+    (col) => col.references('person.id').onUpdate('cascade')
+  )
+  .execute()
+```
+
+Generated SQL (PostgreSQL):
+
+```sql
+create table "pet" (
+  "owner_id" integer references "person" ("id") on update cascade
+)
+```
+
+### unique
+
+Adds a unique constraint for the column.
+
+```ts
+unique(): ColumnDefinitionBuilder
+```
+
+<ResponseField name="returns" type="ColumnDefinitionBuilder">
+  A new builder with unique constraint
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createTable('person')
+  .addColumn('email', 'varchar(255)', col => col.unique())
+  .execute()
+```
+
+Generated SQL (MySQL):
+
+```sql
+create table `person` (
+  `email` varchar(255) unique
+)
+```
+
+### notNull
+
+Adds a `NOT NULL` constraint for the column.
+
+```ts
+notNull(): ColumnDefinitionBuilder
+```
+
+<ResponseField name="returns" type="ColumnDefinitionBuilder">
+  A new builder with not null constraint
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createTable('person')
+  .addColumn('first_name', 'varchar(255)', col => col.notNull())
+  .execute()
+```
+
+Generated SQL (MySQL):
+
+```sql
+create table `person` (
+  `first_name` varchar(255) not null
+)
+```
+
+### unsigned
+
+Adds an `UNSIGNED` modifier for the column.
+
+This only works on some dialects like MySQL.
+
+```ts
+unsigned(): ColumnDefinitionBuilder
+```
+
+<ResponseField name="returns" type="ColumnDefinitionBuilder">
+  A new builder with unsigned modifier
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createTable('person')
+  .addColumn('age', 'integer', col => col.unsigned())
+  .execute()
+```
+
+Generated SQL (MySQL):
+
+```sql
+create table `person` (
+  `age` integer unsigned
+)
+```
+
+### defaultTo
+
+Adds a default value constraint for the column.
+
+```ts
+defaultTo(value: DefaultValueExpression): ColumnDefinitionBuilder
+```
+
+<ParamField path="value" type="DefaultValueExpression" required>
+  The default value (can be a primitive value or a SQL expression)
+</ParamField>
+
+<ResponseField name="returns" type="ColumnDefinitionBuilder">
+  A new builder with default value
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createTable('pet')
+  .addColumn('number_of_legs', 'integer', (col) => col.defaultTo(4))
+  .execute()
+```
+
+Generated SQL (MySQL):
+
+```sql
+create table `pet` (
+  `number_of_legs` integer default 4
+)
+```
+
+Using SQL expressions:
+
+```ts
+import { sql } from 'kysely'
+
+await db.schema
+  .createTable('pet')
+  .addColumn(
+    'created_at',
+    'timestamp',
+    (col) => col.defaultTo(sql`CURRENT_TIMESTAMP`)
+  )
+  .execute()
+```
+
+Generated SQL (MySQL):
+
+```sql
+create table `pet` (
+  `created_at` timestamp default CURRENT_TIMESTAMP
+)
+```
+
+### check
+
+Adds a check constraint for the column.
+
+```ts
+check(expression: Expression<any>): ColumnDefinitionBuilder
+```
+
+<ParamField path="expression" type="Expression<any>" required>
+  The check expression
+</ParamField>
+
+<ResponseField name="returns" type="ColumnDefinitionBuilder">
+  A new builder with check constraint
+</ResponseField>
+
+#### Examples
+
+```ts
+import { sql } from 'kysely'
+
+await db.schema
+  .createTable('pet')
+  .addColumn('number_of_legs', 'integer', (col) =>
+    col.check(sql`number_of_legs < 5`)
+  )
+  .execute()
+```
+
+Generated SQL (MySQL):
+
+```sql
+create table `pet` (
+  `number_of_legs` integer check (number_of_legs < 5)
+)
+```
+
+### generatedAlwaysAs
+
+Makes the column a generated column using a `GENERATED ALWAYS AS` statement.
+
+```ts
+generatedAlwaysAs(expression: Expression<any>): ColumnDefinitionBuilder
+```
+
+<ParamField path="expression" type="Expression<any>" required>
+  The generation expression
+</ParamField>
+
+<ResponseField name="returns" type="ColumnDefinitionBuilder">
+  A new builder with generated column definition
+</ResponseField>
+
+#### Examples
+
+```ts
+import { sql } from 'kysely'
+
+await db.schema
+  .createTable('person')
+  .addColumn('full_name', 'varchar(255)',
+    (col) => col.generatedAlwaysAs(sql`concat(first_name, ' ', last_name)`)
+  )
+  .execute()
+```
+
+Generated SQL (MySQL):
+
+```sql
+create table `person` (
+  `full_name` varchar(255) generated always as (concat(first_name, ' ', last_name))
+)
+```
+
+### generatedAlwaysAsIdentity
+
+Adds the `GENERATED ALWAYS AS IDENTITY` specifier.
+
+This only works on some dialects like PostgreSQL.
+
+For MS SQL Server (MSSQL)'s identity column use [identity](#identity).
+
+```ts
+generatedAlwaysAsIdentity(): ColumnDefinitionBuilder
+```
+
+<ResponseField name="returns" type="ColumnDefinitionBuilder">
+  A new builder with generated always as identity
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createTable('person')
+  .addColumn('id', 'integer', col => col.generatedAlwaysAsIdentity().primaryKey())
+  .execute()
+```
+
+Generated SQL (PostgreSQL):
+
+```sql
+create table "person" (
+  "id" integer generated always as identity primary key
+)
+```
+
+### generatedByDefaultAsIdentity
+
+Adds the `GENERATED BY DEFAULT AS IDENTITY` specifier on supported dialects.
+
+This only works on some dialects like PostgreSQL.
+
+For MS SQL Server (MSSQL)'s identity column use [identity](#identity).
+
+```ts
+generatedByDefaultAsIdentity(): ColumnDefinitionBuilder
+```
+
+<ResponseField name="returns" type="ColumnDefinitionBuilder">
+  A new builder with generated by default as identity
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createTable('person')
+  .addColumn('id', 'integer', col => col.generatedByDefaultAsIdentity().primaryKey())
+  .execute()
+```
+
+Generated SQL (PostgreSQL):
+
+```sql
+create table "person" (
+  "id" integer generated by default as identity primary key
+)
+```
+
+### stored
+
+Makes a generated column stored instead of virtual. This method can only be used with [generatedAlwaysAs](#generatedalwaysas).
+
+```ts
+stored(): ColumnDefinitionBuilder
+```
+
+<ResponseField name="returns" type="ColumnDefinitionBuilder">
+  A new builder with stored modifier
+</ResponseField>
+
+#### Examples
+
+```ts
+import { sql } from 'kysely'
+
+await db.schema
+  .createTable('person')
+  .addColumn('full_name', 'varchar(255)', (col) => col
+    .generatedAlwaysAs(sql`concat(first_name, ' ', last_name)`)
+    .stored()
+  )
+  .execute()
+```
+
+Generated SQL (MySQL):
+
+```sql
+create table `person` (
+  `full_name` varchar(255) generated always as (concat(first_name, ' ', last_name)) stored
+)
+```
+
+### modifyFront
+
+Adds any additional SQL right after the column's data type.
+
+```ts
+modifyFront(modifier: Expression<any>): ColumnDefinitionBuilder
+```
+
+<ParamField path="modifier" type="Expression<any>" required>
+  The SQL expression to add
+</ParamField>
+
+<ResponseField name="returns" type="ColumnDefinitionBuilder">
+  A new builder with the front modifier
+</ResponseField>
+
+#### Examples
+
+```ts
+import { sql } from 'kysely'
+
+await db.schema
+  .createTable('person')
+  .addColumn('id', 'integer', col => col.primaryKey())
+  .addColumn(
+    'first_name',
+    'varchar(36)',
+    (col) => col.modifyFront(sql`collate utf8mb4_general_ci`).notNull()
+  )
+  .execute()
+```
+
+Generated SQL (MySQL):
+
+```sql
+create table `person` (
+  `id` integer primary key,
+  `first_name` varchar(36) collate utf8mb4_general_ci not null
+)
+```
+
+### nullsNotDistinct
+
+Adds `NULLS NOT DISTINCT` specifier. Should be used with `unique` constraint.
+
+This only works on some dialects like PostgreSQL.
+
+```ts
+nullsNotDistinct(): ColumnDefinitionBuilder
+```
+
+<ResponseField name="returns" type="ColumnDefinitionBuilder">
+  A new builder with nulls not distinct
+</ResponseField>
+
+#### Examples
+
+```ts
+db.schema
+  .createTable('person')
+  .addColumn('id', 'integer', col => col.primaryKey())
+  .addColumn('first_name', 'varchar(30)', col => col.unique().nullsNotDistinct())
+  .execute()
+```
+
+Generated SQL (PostgreSQL):
+
+```sql
+create table "person" (
+  "id" integer primary key,
+  "first_name" varchar(30) unique nulls not distinct
+)
+```
+
+### ifNotExists
+
+Adds `IF NOT EXISTS` specifier. This only works for PostgreSQL.
+
+```ts
+ifNotExists(): ColumnDefinitionBuilder
+```
+
+<ResponseField name="returns" type="ColumnDefinitionBuilder">
+  A new builder with if not exists
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .alterTable('person')
+  .addColumn('email', 'varchar(255)', col => col.unique().ifNotExists())
+  .execute()
+```
+
+Generated SQL (PostgreSQL):
+
+```sql
+alter table "person" add column if not exists "email" varchar(255) unique
+```
+
+### modifyEnd
+
+Adds any additional SQL to the end of the column definition.
+
+```ts
+modifyEnd(modifier: Expression<any>): ColumnDefinitionBuilder
+```
+
+<ParamField path="modifier" type="Expression<any>" required>
+  The SQL expression to add
+</ParamField>
+
+<ResponseField name="returns" type="ColumnDefinitionBuilder">
+  A new builder with the end modifier
+</ResponseField>
+
+#### Examples
+
+```ts
+import { sql } from 'kysely'
+
+await db.schema
+  .createTable('person')
+  .addColumn('id', 'integer', col => col.primaryKey())
+  .addColumn(
+    'age',
+    'integer',
+    col => col.unsigned()
+      .notNull()
+      .modifyEnd(sql`comment ${sql.lit('it is not polite to ask a woman her age')}`)
+  )
+  .execute()
+```
+
+Generated SQL (MySQL):
+
+```sql
+create table `person` (
+  `id` integer primary key,
+  `age` integer unsigned not null comment 'it is not polite to ask a woman her age'
+)
+```
+
+### $call
+
+Calls the provided function passing `this` as the only argument.
+
+```ts
+$call<T>(func: (qb: this) => T): T
+```
+
+<ParamField path="func" type="(qb: this) => T" required>
+  A function that receives the builder and returns a value
+</ParamField>
+
+<ResponseField name="returns" type="T">
+  The return value of the provided function
+</ResponseField>

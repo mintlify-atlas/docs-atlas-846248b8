@@ -1,0 +1,174 @@
+---
+title: "Building Dynamic Queries"
+description: "Use the DynamicModule to build queries with runtime column and table names"
+---
+
+Kysely is built in a way that by default you can't refer to tables or columns that are not visible in the current query context. This is all done by TypeScript at compile time, which means you need to know the columns and tables at compile time.
+
+The `DynamicModule` is designed for cases where column or table names come from user input or are not otherwise known at compile time.
+
+<Warning>
+**Security Warning**: Unlike values, column names are not escaped by the database engine or Kysely. If you pass unchecked column names using the dynamic module, you create an SQL injection vulnerability. Always validate user input before passing it to these methods.
+</Warning>
+
+## Accessing the dynamic module
+
+The dynamic module is available on the `db` instance:
+
+```ts
+const { ref, table } = db.dynamic
+```
+
+## Dynamic column references
+
+Use `ref()` to create references to columns not known at compile time.
+
+### Filter by dynamic column
+
+```ts
+async function someQuery(filterColumn: string, filterValue: string) {
+  const { ref } = db.dynamic
+  
+  return await db
+    .selectFrom('person')
+    .selectAll()
+    .where(ref(filterColumn), '=', filterValue)
+    .execute()
+}
+
+someQuery('first_name', 'Arnold')
+someQuery('person.last_name', 'Aniston')
+```
+
+### Order by dynamic column
+
+```ts
+async function someQuery(orderBy: string) {
+  const { ref } = db.dynamic
+  
+  return await db
+    .selectFrom('person')
+    .select('person.first_name as fn')
+    .orderBy(ref(orderBy))
+    .execute()
+}
+
+someQuery('fn')
+```
+
+## Dynamic selections
+
+You can add selections dynamically with proper typing:
+
+```ts
+const { ref } = db.dynamic
+
+// Column name from user input
+const columnFromUserInput: PossibleColumns = 'birthdate'
+
+// Type that lists all possible values
+type PossibleColumns = 'last_name' | 'first_name' | 'birthdate'
+
+const [person] = await db
+  .selectFrom('person')
+  .select([
+    ref<PossibleColumns>(columnFromUserInput),
+    'id'
+  ])
+  .execute()
+
+// All PossibleColumns appear as optional fields
+const lastName: string | null | undefined = person?.last_name
+const firstName: string | undefined = person?.first_name
+const birthDate: Date | null | undefined = person?.birthdate
+
+// Compile-time selections remain typed normally
+person?.id
+```
+
+<Info>
+The resulting type contains all `PossibleColumns` as optional fields because we cannot know which field was actually selected before running the code.
+</Info>
+
+## Dynamic table references
+
+Use `table()` to reference tables that aren't fully known at compile time. The type parameter can be a union of multiple tables.
+
+### Generic find function
+
+Here's a type-safe helper for finding a row by any column value:
+
+```ts
+import { SelectType } from 'kysely'
+import { Database } from './database'
+
+async function getRowByColumn<
+  T extends keyof Database,
+  C extends keyof Database[T] & string,
+  V extends SelectType<Database[T][C]>,
+>(t: T, c: C, v: V) {
+  const { table, ref } = db.dynamic
+  
+  return await db
+    .selectFrom(table(t).as('t'))
+    .selectAll()
+    .where(ref(c), '=', v)
+    .orderBy('t.id')
+    .executeTakeFirstOrThrow()
+}
+
+const person = await getRowByColumn('person', 'first_name', 'Arnold')
+```
+
+## Best practices
+
+<CardGroup cols={2}>
+
+<Card title="Validate input" icon="shield-check">
+Always validate column and table names before passing them to dynamic methods
+</Card>
+
+<Card title="Use type unions" icon="code">
+Define explicit type unions for possible column values to maintain type safety
+</Card>
+
+<Card title="Prefer static" icon="lock">
+Only use dynamic queries when truly necessary — static queries are safer
+</Card>
+
+<Card title="Use allowlists" icon="list-check">
+Maintain allowlists of valid column/table names rather than accepting arbitrary input
+</Card>
+
+</CardGroup>
+
+## Example: Dynamic search
+
+Here's a more complete example combining multiple dynamic features:
+
+```ts
+type SearchableColumn = 'first_name' | 'last_name' | 'email'
+type SortableColumn = 'first_name' | 'last_name' | 'created_at'
+
+interface SearchParams {
+  searchColumn: SearchableColumn
+  searchValue: string
+  sortColumn: SortableColumn
+  sortDirection: 'asc' | 'desc'
+}
+
+async function searchPersons(params: SearchParams) {
+  const { ref } = db.dynamic
+  
+  return await db
+    .selectFrom('person')
+    .selectAll()
+    .where(ref<SearchableColumn>(params.searchColumn), 'like', `%${params.searchValue}%`)
+    .orderBy(ref<SortableColumn>(params.sortColumn), params.sortDirection)
+    .execute()
+}
+```
+
+<Tip>
+Notice how we use TypeScript's type system to restrict which columns can be searched and sorted, providing a layer of safety on top of the dynamic references.
+</Tip>

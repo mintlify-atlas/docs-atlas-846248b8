@@ -1,0 +1,293 @@
+---
+title: 'SqliteDialect'
+description: 'SQLite dialect using the better-sqlite3 library'
+---
+
+## Overview
+
+SQLite dialect that uses the [better-sqlite3](https://github.com/JoshuaWise/better-sqlite3) library. This dialect is ideal for embedded databases, testing, and small-scale applications.
+
+**Source:** `src/dialect/sqlite/sqlite-dialect.ts:38`
+
+## Installation
+
+Install the required peer dependency:
+
+```bash
+npm install better-sqlite3
+npm install --save-dev @types/better-sqlite3
+```
+
+## Basic Usage
+
+<CodeGroup>
+```typescript File Database
+import { Kysely, SqliteDialect } from 'kysely'
+import Database from 'better-sqlite3'
+
+const db = new Kysely<DatabaseSchema>({
+  dialect: new SqliteDialect({
+    database: new Database('path/to/database.db')
+  })
+})
+```
+
+```typescript In-Memory Database
+import { Kysely, SqliteDialect } from 'kysely'
+import Database from 'better-sqlite3'
+
+const db = new Kysely<DatabaseSchema>({
+  dialect: new SqliteDialect({
+    database: new Database(':memory:')
+  })
+})
+```
+
+```typescript Lazy Initialization
+import { Kysely, SqliteDialect } from 'kysely'
+import Database from 'better-sqlite3'
+
+// Database is created only when first query is executed
+const db = new Kysely<DatabaseSchema>({
+  dialect: new SqliteDialect({
+    database: async () => new Database('path/to/database.db')
+  })
+})
+```
+</CodeGroup>
+
+## Configuration
+
+### SqliteDialectConfig
+
+**Source:** `src/dialect/sqlite/sqlite-dialect-config.ts:6`
+
+<ParamField path="database" type="SqliteDatabase | (() => Promise<SqliteDatabase>)" required>
+  An SQLite Database instance or a function that returns one.
+  
+  If a function is provided, it's called once when the first query is executed.
+  
+  See [better-sqlite3 documentation](https://github.com/JoshuaWise/better-sqlite3/blob/master/docs/api.md#new-databasepath-options) for available database options.
+</ParamField>
+
+<ParamField path="onCreateConnection" type="(connection: DatabaseConnection) => Promise<void>">
+  Called once when the first query is executed. This is a Kysely-specific feature and does not come from the `better-sqlite3` module.
+
+  Useful for setting up database-level configuration like PRAGMA statements.
+
+  ```typescript
+  new SqliteDialect({
+    database: new Database('db.sqlite'),
+    onCreateConnection: async (connection) => {
+      await connection.executeQuery(
+        CompiledQuery.raw('PRAGMA foreign_keys = ON')
+      )
+    }
+  })
+  ```
+</ParamField>
+
+## Database Options
+
+When creating a better-sqlite3 Database instance, you can pass various options:
+
+```typescript
+import Database from 'better-sqlite3'
+
+const database = new Database('mydb.db', {
+  readonly: false, // Open in read-only mode
+  fileMustExist: false, // Throw error if file doesn't exist
+  timeout: 5000, // Milliseconds to wait for lock before throwing SQLITE_BUSY
+  verbose: console.log, // Log every SQL statement
+})
+```
+
+## Common Patterns
+
+### Enable Foreign Keys
+
+SQLite requires foreign key constraints to be enabled per connection:
+
+```typescript
+import { Kysely, SqliteDialect } from 'kysely'
+import Database from 'better-sqlite3'
+
+const db = new Kysely<DatabaseSchema>({
+  dialect: new SqliteDialect({
+    database: new Database('db.sqlite'),
+    onCreateConnection: async (connection) => {
+      await connection.executeQuery(
+        CompiledQuery.raw('PRAGMA foreign_keys = ON')
+      )
+    }
+  })
+})
+```
+
+### Write-Ahead Logging (WAL)
+
+Enable WAL mode for better concurrency:
+
+```typescript
+import Database from 'better-sqlite3'
+
+const database = new Database('mydb.db')
+database.pragma('journal_mode = WAL')
+
+const db = new Kysely<DatabaseSchema>({
+  dialect: new SqliteDialect({ database })
+})
+```
+
+### Performance Optimization
+
+Optimize SQLite for better performance:
+
+```typescript
+import Database from 'better-sqlite3'
+
+const database = new Database('mydb.db')
+
+// Performance PRAGMAs
+database.pragma('journal_mode = WAL')
+database.pragma('synchronous = NORMAL')
+database.pragma('cache_size = -64000') // 64MB cache
+database.pragma('temp_store = MEMORY')
+
+const db = new Kysely<DatabaseSchema>({
+  dialect: new SqliteDialect({ database })
+})
+```
+
+### In-Memory Database
+
+Use in-memory databases for testing or temporary data:
+
+```typescript
+import Database from 'better-sqlite3'
+
+const db = new Kysely<DatabaseSchema>({
+  dialect: new SqliteDialect({
+    database: new Database(':memory:')
+  })
+})
+```
+
+### Read-Only Access
+
+Open database in read-only mode:
+
+```typescript
+import Database from 'better-sqlite3'
+
+const db = new Kysely<DatabaseSchema>({
+  dialect: new SqliteDialect({
+    database: new Database('mydb.db', { readonly: true })
+  })
+})
+```
+
+## Testing
+
+SQLite is excellent for testing due to its in-memory mode:
+
+```typescript
+import { beforeEach, describe, it } from 'vitest'
+import { Kysely, SqliteDialect } from 'kysely'
+import Database from 'better-sqlite3'
+
+describe('User tests', () => {
+  let db: Kysely<DatabaseSchema>
+
+  beforeEach(async () => {
+    // Create fresh in-memory database for each test
+    db = new Kysely<DatabaseSchema>({
+      dialect: new SqliteDialect({
+        database: new Database(':memory:')
+      })
+    })
+
+    // Run migrations
+    await db.schema
+      .createTable('users')
+      .addColumn('id', 'integer', col => col.primaryKey())
+      .addColumn('name', 'text', col => col.notNull())
+      .execute()
+  })
+
+  it('should insert user', async () => {
+    await db.insertInto('users')
+      .values({ name: 'Alice' })
+      .execute()
+  })
+})
+```
+
+## Transactions
+
+better-sqlite3 is synchronous and uses immediate transactions by default. Kysely handles this automatically:
+
+```typescript
+await db.transaction().execute(async (trx) => {
+  await trx.insertInto('users').values({ name: 'Alice' }).execute()
+  await trx.insertInto('posts').values({ userId: 1, title: 'Hello' }).execute()
+})
+```
+
+## Backup and Restore
+
+Use better-sqlite3's backup API:
+
+```typescript
+import Database from 'better-sqlite3'
+
+const source = new Database('source.db')
+const destination = new Database('backup.db')
+
+source.backup(destination)
+  .then(() => console.log('Backup complete'))
+  .catch(err => console.error('Backup failed:', err))
+```
+
+## Limitations
+
+<Warning>
+  SQLite has some limitations compared to client-server databases:
+  
+  - No concurrent writes (only one writer at a time)
+  - Limited ALTER TABLE support
+  - No built-in user authentication
+  - Not suitable for high-traffic web applications
+  - File-based, so not ideal for distributed systems
+</Warning>
+
+## Related Types
+
+### SqliteDatabase
+
+**Source:** `src/dialect/sqlite/sqlite-dialect-config.ts:32`
+
+The subset of the `better-sqlite3` Database interface that Kysely requires:
+
+```typescript
+interface SqliteDatabase {
+  close(): void
+  prepare(sql: string): SqliteStatement
+}
+```
+
+### SqliteStatement
+
+**Source:** `src/dialect/sqlite/sqlite-dialect-config.ts:37`
+
+```typescript
+interface SqliteStatement {
+  readonly reader: boolean
+  all(parameters: ReadonlyArray<unknown>): unknown[]
+  run(parameters: ReadonlyArray<unknown>): {
+    changes: number | bigint
+    lastInsertRowid: number | bigint
+  }
+  iterate(parameters: ReadonlyArray<unknown>): IterableIterator<unknown>
+}
+```

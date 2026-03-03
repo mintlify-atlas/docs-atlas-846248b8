@@ -1,0 +1,220 @@
+---
+title: Installation
+description: Install Kysely using npm, yarn, pnpm, or bun for your TypeScript SQL projects.
+---
+
+# Installation
+
+Kysely can be installed using any major JavaScript package manager. Choose your preferred package manager below.
+
+## Package Manager Installation
+
+<CodeGroup>
+```bash npm
+npm install kysely
+```
+
+```bash yarn
+yarn add kysely
+```
+
+```bash pnpm
+pnpm install kysely
+```
+
+```bash bun
+bun install kysely
+```
+</CodeGroup>
+
+## Database Driver Installation
+
+Kysely requires a database driver to connect to your database. Install the appropriate driver for your database:
+
+<Tabs>
+  <Tab title="PostgreSQL">
+    <CodeGroup>
+    ```bash npm
+    npm install pg
+    ```
+
+    ```bash yarn
+    yarn add pg
+    ```
+
+    ```bash pnpm
+    pnpm install pg
+    ```
+
+    ```bash bun
+    bun install pg
+    ```
+    </CodeGroup>
+
+    <Note>
+      For TypeScript users, you may also want to install `@types/pg` as a dev dependency.
+    </Note>
+  </Tab>
+
+  <Tab title="MySQL">
+    <CodeGroup>
+    ```bash npm
+    npm install mysql2
+    ```
+
+    ```bash yarn
+    yarn add mysql2
+    ```
+
+    ```bash pnpm
+    pnpm install mysql2
+    ```
+
+    ```bash bun
+    bun install mysql2
+    ```
+    </CodeGroup>
+
+    <Warning>
+      Do **not** use `mysql2/promise`! Kysely will handle promises internally.
+    </Warning>
+  </Tab>
+
+  <Tab title="SQLite">
+    <CodeGroup>
+    ```bash npm
+    npm install better-sqlite3
+    ```
+
+    ```bash yarn
+    yarn add better-sqlite3
+    ```
+
+    ```bash pnpm
+    pnpm install better-sqlite3
+    ```
+
+    ```bash bun
+    bun install better-sqlite3
+    ```
+    </CodeGroup>
+
+    <Note>
+      For TypeScript users, you may also want to install `@types/better-sqlite3` as a dev dependency.
+    </Note>
+  </Tab>
+
+  <Tab title="MS SQL Server">
+    <CodeGroup>
+    ```bash npm
+    npm install tedious tarn
+    ```
+
+    ```bash yarn
+    yarn add tedious tarn
+    ```
+
+    ```bash pnpm
+    pnpm install tedious tarn
+    ```
+
+    ```bash bun
+    bun install tedious tarn
+    ```
+    </CodeGroup>
+
+    <Note>
+      MS SQL Server requires both `tedious` (the driver) and `tarn` (for connection pooling).
+    </Note>
+  </Tab>
+</Tabs>
+
+## Deno Installation
+
+For Deno users, add Kysely to your `deno.json` imports:
+
+```json deno.json
+{
+  "imports": {
+    "kysely": "npm:kysely@^0.28.0",
+    "pg-pool": "npm:pg-pool@^3.6.0"
+  }
+}
+```
+
+<Note>
+  Replace version numbers with the latest versions. Deno uses different driver imports than Node.js.
+</Note>
+
+## TypeScript Configuration
+
+Kysely requires TypeScript 4.6 or later. Ensure your `tsconfig.json` has these settings:
+
+```json tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "lib": ["ES2020"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  }
+}
+```
+
+<Warning>
+  The `strict` flag is highly recommended to get the full benefits of Kysely's type-safety.
+</Warning>
+
+## Verify Installation
+
+Create a simple test file to verify your installation:
+
+```typescript test.ts
+import { Kysely } from 'kysely'
+
+console.log('Kysely imported successfully!')
+```
+
+Run the file:
+
+<CodeGroup>
+```bash Node.js
+ts-node test.ts
+# or
+npx tsx test.ts
+```
+
+```bash Deno
+deno run test.ts
+```
+
+```bash Bun
+bun run test.ts
+```
+</CodeGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Set up your database and write your first query
+  </Card>
+  <Card title="Type Generation" icon="code" href="https://kysely.dev/docs/generating-types">
+    Learn how to generate types from your database schema
+  </Card>
+</CardGroup>
+
+## Version Compatibility
+
+<Note>
+  **Current Version**: 0.28.x
+  
+  **Node.js**: Requires Node.js 20.0.0 or later
+  
+  **TypeScript**: Requires TypeScript 4.6 or later
+</Note>
+
+For users on older TypeScript versions (< 4.6), Kysely provides compatibility type definitions, but upgrading TypeScript is strongly recommended for the best experience.

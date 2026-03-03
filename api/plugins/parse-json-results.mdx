@@ -1,0 +1,295 @@
+---
+title: ParseJSONResultsPlugin
+description: Parses JSON strings in query results into JavaScript objects and arrays
+---
+
+## Overview
+
+The `ParseJSONResultsPlugin` automatically parses JSON strings in query results into JavaScript objects and arrays. This is useful with database dialects that don't automatically parse JSON but return JSON strings instead.
+
+## Installation
+
+### Global Installation
+
+```typescript
+import { Kysely, ParseJSONResultsPlugin } from 'kysely'
+
+const db = new Kysely<Database>({
+  dialect,
+  plugins: [new ParseJSONResultsPlugin()]
+})
+```
+
+### Per-Query Installation
+
+```typescript
+import { ParseJSONResultsPlugin } from 'kysely'
+
+const result = await db
+  .selectFrom('person')
+  .selectAll()
+  .withPlugin(new ParseJSONResultsPlugin())
+  .execute()
+```
+
+## Constructor Options
+
+```typescript
+interface ParseJSONResultsPluginOptions {
+  objectStrategy?: 'in-place' | 'create'
+}
+```
+
+### objectStrategy
+
+**Type:** `'in-place' | 'create'`  
+**Default:** `'in-place'`
+
+Controls how arrays and objects are handled during parsing:
+
+- `'in-place'` - Arrays' and objects' values are parsed in-place. This is the most time and space efficient option, but can result in runtime errors if some objects/arrays are readonly.
+- `'create'` - New arrays and objects are created to avoid readonly errors.
+
+**Example:**
+
+```typescript
+// Most efficient, but may fail with readonly objects
+const plugin1 = new ParseJSONResultsPlugin({ objectStrategy: 'in-place' })
+
+// Creates new objects, safer with readonly data
+const plugin2 = new ParseJSONResultsPlugin({ objectStrategy: 'create' })
+```
+
+**Source:** ~/workspace/source/src/plugin/parse-json-results/parse-json-results-plugin.ts:11
+
+## Usage Example
+
+### With SQLite JSON Functions
+
+```typescript
+import * as Sqlite from 'better-sqlite3'
+import { Kysely, ParseJSONResultsPlugin, SqliteDialect } from 'kysely'
+import { jsonArrayFrom } from 'kysely/helpers/sqlite'
+
+interface Database {
+  person: {
+    id: number
+    first_name: string
+    last_name: string
+  }
+  pet: {
+    id: number
+    owner_id: number
+    name: string
+    species: string
+  }
+}
+
+const db = new Kysely<Database>({
+  dialect: new SqliteDialect({
+    database: new Sqlite(':memory:'),
+  }),
+  plugins: [new ParseJSONResultsPlugin()],
+})
+
+const result = await db
+  .selectFrom('person')
+  .select((eb) => [
+    'id',
+    'first_name',
+    'last_name',
+    jsonArrayFrom(
+      eb.selectFrom('pet')
+        .whereRef('owner_id', '=', 'person.id')
+        .select(['name', 'species'])
+    ).as('pets')
+  ])
+  .execute()
+
+// Without the plugin, result.pets would be a JSON string
+// With the plugin, result.pets is an array of objects
+console.log(result[0].pets) // [{ name: 'Fluffy', species: 'cat' }, ...]
+```
+
+### Per-Query Usage
+
+```typescript
+import { ParseJSONResultsPlugin } from 'kysely'
+import { jsonArrayFrom } from 'kysely/helpers/sqlite'
+
+// Only this query will have JSON parsed
+const result = await db
+  .selectFrom('person')
+  .select((eb) => [
+    'id',
+    'first_name',
+    'last_name',
+    jsonArrayFrom(
+      eb.selectFrom('pet')
+        .whereRef('owner_id', '=', 'person.id')
+        .select(['name', 'species'])
+    ).as('pets')
+  ])
+  .withPlugin(new ParseJSONResultsPlugin())
+  .execute()
+```
+
+## Methods
+
+### transformQuery
+
+```typescript
+transformQuery(args: PluginTransformQueryArgs): RootOperationNode
+```
+
+No-op implementation. This plugin doesn't modify queries, only results.
+
+**Returns:** The original, unmodified query node
+
+**Source:** ~/workspace/source/src/plugin/parse-json-results/parse-json-results-plugin.ts:79
+
+### transformResult
+
+```typescript
+async transformResult(
+  args: PluginTransformResultArgs
+): Promise<QueryResult<UnknownRow>>
+```
+
+Recursively parses all JSON strings in the result rows into JavaScript objects and arrays.
+
+**Parameters:**
+
+- `args.queryId` - Unique identifier for the query
+- `args.result` - The query result containing rows to parse
+
+**Returns:** The result with all JSON strings parsed into objects/arrays
+
+**Source:** ~/workspace/source/src/plugin/parse-json-results/parse-json-results-plugin.ts:83
+
+## How It Works
+
+The plugin recursively processes all values in the result rows:
+
+1. **String Detection**: Checks if a value is a string starting with `[` or `{`
+2. **JSON Parsing**: Attempts to parse the string as JSON
+3. **Recursive Processing**: Recursively processes nested objects and arrays
+4. **Type Preservation**: Non-JSON values are left unchanged
+
+### Parsing Logic
+
+```typescript
+// Simplified version of the parsing logic
+
+function parse(obj: unknown): unknown {
+  if (typeof obj === 'string') {
+    // Only try to parse strings that look like JSON
+    if (obj.match(/^[\[\{]/)) {
+      try {
+        return parse(JSON.parse(obj))
+      } catch {
+        return obj  // Not valid JSON, return as-is
+      }
+    }
+    return obj
+  }
+  
+  if (Array.isArray(obj)) {
+    return obj.map(item => parse(item))
+  }
+  
+  if (isPlainObject(obj)) {
+    const result = {}
+    for (const key in obj) {
+      result[key] = parse(obj[key])
+    }
+    return result
+  }
+  
+  return obj
+}
+```
+
+## Use Cases
+
+### SQLite with JSON Functions
+
+SQLite's `json_array()` and `json_object()` functions return JSON strings:
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .select((eb) => [
+    eb.fn('json_object', [
+      'firstName', 'first_name',
+      'lastName', 'last_name'
+    ]).as('personData')
+  ])
+  .withPlugin(new ParseJSONResultsPlugin())
+  .execute()
+
+// personData is a JavaScript object, not a string
+console.log(result[0].personData.firstName)
+```
+
+### MySQL JSON Columns
+
+MySQL may return JSON columns as strings in some configurations:
+
+```typescript
+const db = new Kysely<Database>({
+  dialect: new MysqlDialect({ /* ... */ }),
+  plugins: [new ParseJSONResultsPlugin()]
+})
+
+const result = await db
+  .selectFrom('products')
+  .select(['id', 'name', 'metadata'])  // metadata is a JSON column
+  .execute()
+
+// metadata is automatically parsed
+console.log(result[0].metadata.category)
+```
+
+### Nested JSON Aggregations
+
+```typescript
+import { jsonArrayFrom, jsonObjectFrom } from 'kysely/helpers/sqlite'
+
+const result = await db
+  .selectFrom('author')
+  .select((eb) => [
+    'id',
+    'name',
+    jsonArrayFrom(
+      eb.selectFrom('book')
+        .whereRef('author_id', '=', 'author.id')
+        .select((eb) => [
+          'id',
+          'title',
+          jsonArrayFrom(
+            eb.selectFrom('review')
+              .whereRef('book_id', '=', 'book.id')
+              .select(['rating', 'comment'])
+          ).as('reviews')
+        ])
+    ).as('books')
+  ])
+  .withPlugin(new ParseJSONResultsPlugin())
+  .execute()
+
+// Deeply nested JSON is all parsed
+console.log(result[0].books[0].reviews[0].rating)
+```
+
+## Performance Considerations
+
+- **In-place Strategy**: Fastest and most memory-efficient, suitable for most use cases
+- **Create Strategy**: Slightly slower but safer when dealing with readonly objects or when you need to preserve original data
+- **Large Results**: Parsing large JSON results can be CPU-intensive; consider using the plugin only for queries that actually return JSON
+
+## See Also
+
+- [KyselyPlugin Interface](/api/plugins/overview)
+- [JSON Functions](/api/json-functions)
+- [SQLite Helpers](/helpers/sqlite)

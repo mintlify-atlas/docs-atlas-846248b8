@@ -1,0 +1,677 @@
+---
+title: ExpressionBuilder
+description: A type-safe expression builder for creating SQL expressions in Kysely queries
+---
+
+# ExpressionBuilder
+
+`ExpressionBuilder` provides a type-safe way to build SQL expressions in Kysely. It's commonly passed as a callback parameter (often named `eb`) in methods like `where`, `select`, `set`, and many others.
+
+## Type Parameters
+
+<ParamField path="DB" type="object" required>
+  The database schema type
+</ParamField>
+
+<ParamField path="TB" type="keyof DB" required>
+  The table references available in the current query context
+</ParamField>
+
+## Methods
+
+### Binary Expression (Call Signature)
+
+Creates a binary expression for comparing values or performing arithmetic operations.
+
+```typescript
+<
+  RE extends ReferenceExpression<DB, TB>,
+  OP extends BinaryOperatorExpression,
+  VE extends OperandValueExpressionOrList<DB, TB, RE>,
+>(
+  lhs: RE,
+  op: OP,
+  rhs: VE,
+): ExpressionWrapper<DB, TB, ...>
+```
+
+<ParamField path="lhs" type="ReferenceExpression" required>
+  Left-hand side of the expression (typically a column reference)
+</ParamField>
+
+<ParamField path="op" type="BinaryOperatorExpression" required>
+  The operator (e.g., `=`, `>`, `<`, `+`, `-`, `in`, `like`)
+</ParamField>
+
+<ParamField path="rhs" type="OperandValueExpressionOrList" required>
+  Right-hand side value or expression
+</ParamField>
+
+**Example:**
+
+```typescript
+const result = await db.selectFrom('person')
+  .selectAll()
+  .where((eb) => eb('first_name', '=', 'Jennifer'))
+  .execute()
+```
+
+### eb
+
+Returns a copy of the expression builder for destructuring.
+
+```typescript
+get eb(): ExpressionBuilder<DB, TB>
+```
+
+**Example:**
+
+```typescript
+const result = await db.selectFrom('person')
+  .where(({ eb, exists, selectFrom }) =>
+    eb('first_name', '=', 'Jennifer').and(exists(
+      selectFrom('pet').whereRef('owner_id', '=', 'person.id').select('pet.id')
+    ))
+  )
+  .selectAll()
+  .execute()
+```
+
+### fn
+
+Returns a `FunctionModule` for writing type-safe function calls.
+
+```typescript
+get fn(): FunctionModule<DB, TB>
+```
+
+The difference between this and `Kysely.fn` is that this one is more type safe - you can only refer to columns visible to the part of the query you are building.
+
+**Example:**
+
+```typescript
+const result = await db.selectFrom('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  .select((eb) => [
+    'person.id',
+    eb.fn.count('pet.id').as('pet_count')
+  ])
+  .groupBy('person.id')
+  .having((eb) => eb.fn.count('pet.id'), '>', 10)
+  .execute()
+```
+
+### selectFrom
+
+Creates a subquery that can reference parent query tables.
+
+```typescript
+selectFrom<TE extends TableExpressionOrList<DB, TB>>(
+  from: TE,
+): SelectFrom<DB, TB, TE>
+```
+
+<ParamField path="from" type="TableExpressionOrList" required>
+  Table expression or list of tables to select from
+</ParamField>
+
+**Example:**
+
+```typescript
+const result = await db.selectFrom('pet')
+  .select((eb) => [
+    'pet.name',
+    eb.selectFrom('person')
+      .whereRef('person.id', '=', 'pet.owner_id')
+      .select('person.first_name')
+      .as('owner_name')
+  ])
+  .execute()
+```
+
+### case
+
+Creates a `case` statement/operator.
+
+```typescript
+case(): CaseBuilder<DB, TB>
+case<C extends SimpleReferenceExpression<DB, TB>>(
+  column: C,
+): CaseBuilder<DB, TB, ExtractTypeFromReferenceExpression<DB, TB, C>>
+case<E extends Expression<any>>(
+  expression: E,
+): CaseBuilder<DB, TB, ExtractTypeFromValueExpression<E>>
+```
+
+<ParamField path="column" type="SimpleReferenceExpression">
+  Optional column or expression to compare in when clauses
+</ParamField>
+
+**Example:**
+
+```typescript
+const { title, name } = await db
+  .selectFrom('person')
+  .where('id', '=', 123)
+  .select((eb) => [
+    eb.fn.coalesce('last_name', 'first_name').as('name'),
+    eb
+      .case()
+      .when('gender', '=', 'male')
+      .then('Mr.')
+      .when('gender', '=', 'female')
+      .then(
+        eb
+          .case('marital_status')
+          .when('single')
+          .then('Ms.')
+          .else('Mrs.')
+          .end()
+      )
+      .end()
+      .as('title'),
+  ])
+  .executeTakeFirstOrThrow()
+```
+
+### ref
+
+Creates a column reference expression.
+
+```typescript
+ref<RE extends StringReference<DB, TB>>(
+  reference: RE,
+): ExpressionWrapper<DB, TB, ExtractTypeFromReferenceExpression<DB, TB, RE>>
+
+ref<RE extends StringReference<DB, TB>>(
+  reference: RE,
+  op: JSONOperatorWith$,
+): JSONPathBuilder<ExtractTypeFromReferenceExpression<DB, TB, RE>>
+```
+
+<ParamField path="reference" type="StringReference" required>
+  Column reference string (e.g., `first_name`, `person.id`)
+</ParamField>
+
+<ParamField path="op" type="JSONOperatorWith$">
+  JSON path operator (`->$` or `->>$`) for JSON traversal
+</ParamField>
+
+**Example:**
+
+```typescript
+const result = await db.selectFrom('person')
+  .selectAll('person')
+  .where((eb) => eb.or([
+    eb('first_name', '=', eb.ref('last_name')),
+    eb('first_name', '=', eb.ref('middle_name'))
+  ]))
+  .execute()
+```
+
+**JSON path example:**
+
+```typescript
+const result = await db.selectFrom('person')
+  .where(({ eb, ref }) => eb(
+    ref('profile', '->').key('addresses').at(0).key('city'),
+    '=',
+    'San Diego'
+  ))
+  .selectAll()
+  .execute()
+```
+
+### jsonPath
+
+Creates a JSON path expression with the provided column as root document.
+
+```typescript
+jsonPath<$ extends StringReference<DB, TB>>(): JSONPathBuilder<ExtractTypeFromReferenceExpression<DB, TB, $>>
+```
+
+<ParamField path="$" type="StringReference" required>
+  Column reference to use as JSON path root (passed as type parameter)
+</ParamField>
+
+**Example:**
+
+```typescript
+await db.updateTable('person')
+  .set('profile', (eb) => eb.fn('json_set', [
+    'profile',
+    eb.jsonPath<'profile'>().key('addresses').at('last').key('city'),
+    eb.val('San Diego')
+  ]))
+  .where('id', '=', 3)
+  .execute()
+```
+
+### table
+
+Creates a table reference.
+
+```typescript
+table<T extends TB & string>(
+  table: T,
+): ExpressionWrapper<DB, TB, Selectable<DB[T]>>
+```
+
+<ParamField path="table" type="string" required>
+  Table name
+</ParamField>
+
+**Example:**
+
+```typescript
+const result = await db.selectFrom('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  .select(eb => [
+    'person.id',
+    sql<Pet[]>`jsonb_agg(${eb.table('pet')})`.as('pets')
+  ])
+  .groupBy('person.id')
+  .execute()
+```
+
+### val
+
+Returns a value expression.
+
+```typescript
+val<VE>(
+  value: VE,
+): ExpressionWrapper<DB, TB, ExtractTypeFromValueExpression<VE>>
+```
+
+<ParamField path="value" type="any" required>
+  The value to use in the expression
+</ParamField>
+
+This can be used to pass in a value where a reference is taken by default.
+
+**Example:**
+
+```typescript
+const result = await db.selectFrom('person')
+  .selectAll()
+  .where((eb) => eb(
+    eb.val('cat'),
+    '=',
+    eb.fn.any(
+      eb.selectFrom('pet')
+        .select('species')
+        .whereRef('owner_id', '=', 'person.id')
+    )
+  ))
+  .execute()
+```
+
+### refTuple
+
+Creates a tuple expression using column references.
+
+```typescript
+refTuple<
+  R1 extends ReferenceExpression<DB, TB>,
+  R2 extends ReferenceExpression<DB, TB>,
+>(
+  value1: R1,
+  value2: R2,
+): ExpressionWrapper<DB, TB, RefTuple2<DB, TB, R1, R2>>
+```
+
+Supports 2-5 tuple elements.
+
+<ParamField path="value1, value2, ..." type="ReferenceExpression" required>
+  Column references for the tuple
+</ParamField>
+
+**Example:**
+
+```typescript
+const result = await db.selectFrom('person')
+  .selectAll('person')
+  .where(({ eb, refTuple, tuple }) => eb(
+    refTuple('first_name', 'last_name'),
+    'in',
+    [
+      tuple('Jennifer', 'Aniston'),
+      tuple('Sylvester', 'Stallone')
+    ]
+  ))
+  .execute()
+```
+
+### tuple
+
+Creates a value tuple expression.
+
+```typescript
+tuple<V1, V2>(
+  value1: V1,
+  value2: V2,
+): ExpressionWrapper<DB, TB, ValTuple2<V1, V2>>
+```
+
+Supports 2-5 tuple elements.
+
+<ParamField path="value1, value2, ..." type="any" required>
+  Values for the tuple
+</ParamField>
+
+**Example:**
+
+```typescript
+const result = await db.selectFrom('person')
+  .selectAll('person')
+  .where(({ eb, refTuple, tuple }) => eb(
+    refTuple('first_name', 'last_name'),
+    'in',
+    [
+      tuple('Jennifer', 'Aniston'),
+      tuple('Sylvester', 'Stallone')
+    ]
+  ))
+  .execute()
+```
+
+### lit
+
+Returns a literal value expression.
+
+```typescript
+lit<VE extends number | boolean | null>(
+  literal: VE,
+): ExpressionWrapper<DB, TB, VE>
+```
+
+<ParamField path="literal" type="number | boolean | null" required>
+  Literal value (only safe types allowed to prevent SQL injection)
+</ParamField>
+
+Just like `val` but creates a literal value that gets merged in the SQL. To prevent SQL injections, only `boolean`, `number` and `null` values are accepted.
+
+**Example:**
+
+```typescript
+const result = await db.selectFrom('person')
+  .select((eb) => eb.lit(1).as('one'))
+  .execute()
+```
+
+### unary
+
+Creates a unary expression.
+
+```typescript
+unary<RE extends ReferenceExpression<DB, TB>>(
+  op: UnaryOperator,
+  expr: RE,
+): ExpressionWrapper<DB, TB, ExtractTypeFromReferenceExpression<DB, TB, RE>>
+```
+
+<ParamField path="op" type="UnaryOperator" required>
+  Unary operator (e.g., `not`, `exists`, `-`)
+</ParamField>
+
+<ParamField path="expr" type="ReferenceExpression" required>
+  Expression to apply the operator to
+</ParamField>
+
+**Example:**
+
+```typescript
+const result = await db.selectFrom('person')
+  .select((eb) => [
+    'first_name',
+    eb.unary('-', 'age').as('negative_age')
+  ])
+  .execute()
+```
+
+### not
+
+Creates a `not` operation.
+
+```typescript
+not<RE extends ReferenceExpression<DB, TB>>(
+  expr: RE,
+): ExpressionWrapper<DB, TB, ExtractTypeFromReferenceExpression<DB, TB, RE>>
+```
+
+A shortcut for `unary('not', expr)`.
+
+### exists
+
+Creates an `exists` operation.
+
+```typescript
+exists<RE extends ReferenceExpression<DB, TB>>(
+  expr: RE,
+): ExpressionWrapper<DB, TB, SqlBool>
+```
+
+A shortcut for `unary('exists', expr)`.
+
+### neg
+
+Creates a negation operation.
+
+```typescript
+neg<RE extends ReferenceExpression<DB, TB>>(
+  expr: RE,
+): ExpressionWrapper<DB, TB, ExtractTypeFromReferenceExpression<DB, TB, RE>>
+```
+
+A shortcut for `unary('-', expr)`.
+
+### between
+
+Creates a `between` expression.
+
+```typescript
+between<
+  RE extends ReferenceExpression<DB, TB>,
+  SE extends OperandValueExpression<DB, TB, RE>,
+  EE extends OperandValueExpression<DB, TB, RE>,
+>(
+  expr: RE,
+  start: SE,
+  end: EE,
+): ExpressionWrapper<DB, TB, SqlBool>
+```
+
+<ParamField path="expr" type="ReferenceExpression" required>
+  Expression to check
+</ParamField>
+
+<ParamField path="start" type="OperandValueExpression" required>
+  Start of range
+</ParamField>
+
+<ParamField path="end" type="OperandValueExpression" required>
+  End of range
+</ParamField>
+
+**Example:**
+
+```typescript
+const result = await db.selectFrom('person')
+  .selectAll()
+  .where((eb) => eb.between('age', 40, 60))
+  .execute()
+```
+
+### betweenSymmetric
+
+Creates a `between symmetric` expression.
+
+```typescript
+betweenSymmetric<
+  RE extends ReferenceExpression<DB, TB>,
+  SE extends OperandValueExpression<DB, TB, RE>,
+  EE extends OperandValueExpression<DB, TB, RE>,
+>(
+  expr: RE,
+  start: SE,
+  end: EE,
+): ExpressionWrapper<DB, TB, SqlBool>
+```
+
+**Example:**
+
+```typescript
+const result = await db.selectFrom('person')
+  .selectAll()
+  .where((eb) => eb.betweenSymmetric('age', 40, 60))
+  .execute()
+```
+
+### and
+
+Combines expressions using the logical `and` operator.
+
+```typescript
+and<E extends OperandExpression<SqlBool>>(
+  exprs: ReadonlyArray<E>,
+): ExpressionWrapper<DB, TB, SqlBool>
+
+and<E extends Readonly<FilterObject<DB, TB>>>(
+  exprs: E,
+): ExpressionWrapper<DB, TB, SqlBool>
+```
+
+<ParamField path="exprs" type="array | object" required>
+  Array of expressions or filter object for equality comparisons
+</ParamField>
+
+An empty array produces a `true` expression.
+
+**Example:**
+
+```typescript
+const result = await db.selectFrom('person')
+  .selectAll('person')
+  .where((eb) => eb.and([
+    eb('first_name', '=', 'Jennifer'),
+    eb('last_name', '=', 'Aniston'),
+    eb('age', '>', 30)
+  ]))
+  .execute()
+```
+
+**Object notation:**
+
+```typescript
+const result = await db.selectFrom('person')
+  .selectAll('person')
+  .where((eb) => eb.and({
+    first_name: 'Jennifer',
+    last_name: 'Aniston'
+  }))
+  .execute()
+```
+
+### or
+
+Combines expressions using the logical `or` operator.
+
+```typescript
+or<E extends OperandExpression<SqlBool>>(
+  exprs: ReadonlyArray<E>,
+): ExpressionWrapper<DB, TB, SqlBool>
+
+or<E extends Readonly<FilterObject<DB, TB>>>(
+  exprs: E,
+): ExpressionWrapper<DB, TB, SqlBool>
+```
+
+<ParamField path="exprs" type="array | object" required>
+  Array of expressions or filter object for equality comparisons
+</ParamField>
+
+An empty array produces a `false` expression.
+
+**Example:**
+
+```typescript
+const result = await db.selectFrom('person')
+  .selectAll('person')
+  .where((eb) => eb.or([
+    eb('first_name', '=', 'Jennifer'),
+    eb('first_name', '=', 'Arnold'),
+    eb('first_name', '=', 'Sylvester')
+  ]))
+  .execute()
+```
+
+### parens
+
+Wraps the expression in parentheses.
+
+```typescript
+parens<
+  RE extends ReferenceExpression<DB, TB>,
+  OP extends BinaryOperatorExpression,
+  VE extends OperandValueExpressionOrList<DB, TB, RE>,
+>(
+  lhs: RE,
+  op: OP,
+  rhs: VE,
+): ExpressionWrapper<DB, TB, ...>
+
+parens<T>(expr: Expression<T>): ExpressionWrapper<DB, TB, T>
+```
+
+**Example:**
+
+```typescript
+const result = await db.selectFrom('person')
+  .selectAll('person')
+  .where((eb) => eb(eb.parens('age', '+', 1), '/', 100), '<', 0.1)
+  .execute()
+```
+
+### cast
+
+Creates a `cast(expr as dataType)` expression.
+
+```typescript
+cast<T, RE extends ReferenceExpression<DB, TB>>(
+  expr: RE,
+  dataType: DataTypeExpression,
+): ExpressionWrapper<DB, TB, T>
+```
+
+<ParamField path="expr" type="ReferenceExpression" required>
+  Expression to cast
+</ParamField>
+
+<ParamField path="dataType" type="DataTypeExpression" required>
+  Target data type
+</ParamField>
+
+<ParamField path="T" type="type parameter" required>
+  TypeScript type to cast to (must be provided as type parameter)
+</ParamField>
+
+**Example:**
+
+```typescript
+const result = await db.selectFrom('person')
+  .select((eb) => [
+    'id',
+    'first_name',
+    eb.cast<number>('age', 'integer').as('age')
+  ])
+  .execute()
+```
+
+### withSchema
+
+<Warning>Deprecated. Will be removed in kysely 0.25.0.</Warning>
+
+```typescript
+withSchema(schema: string): ExpressionBuilder<DB, TB>
+```

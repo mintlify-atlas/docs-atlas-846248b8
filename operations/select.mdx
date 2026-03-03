@@ -1,0 +1,356 @@
+---
+title: Select Queries
+description: Learn how to use Kysely's SelectQueryBuilder to query data from your database with type-safe select statements.
+---
+
+The `SelectQueryBuilder` is used to build and execute SELECT queries in Kysely. It provides a fluent API for selecting columns, filtering data, joining tables, and more.
+
+## Basic Usage
+
+### Selecting Columns
+
+Select specific columns from a table:
+
+```typescript
+const persons = await db
+  .selectFrom('person')
+  .select('id')
+  .where('first_name', '=', 'Arnold')
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select "id" from "person" where "first_name" = $1
+```
+
+### Multiple Columns
+
+Select multiple columns:
+
+```typescript
+const persons = await db
+  .selectFrom('person')
+  .select(['person.id', 'first_name'])
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select "person"."id", "first_name" from "person"
+```
+
+### Column Aliases
+
+You can give aliases to selections by appending `as the_alias` to the name:
+
+```typescript
+const persons = await db
+  .selectFrom('person as p')
+  .select([
+    'first_name as fn',
+    'p.last_name as ln'
+  ])
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select
+  "first_name" as "fn",
+  "p"."last_name" as "ln"
+from "person" as "p"
+```
+
+## Complex Selections
+
+You can select arbitrary expressions including subqueries and raw SQL snippets:
+
+```typescript
+import { sql } from 'kysely'
+
+const persons = await db.selectFrom('person')
+  .select(({ eb, selectFrom, or, val, lit }) => [
+    // Select a correlated subquery
+    selectFrom('pet')
+      .whereRef('person.id', '=', 'pet.owner_id')
+      .select('pet.name')
+      .orderBy('pet.name')
+      .limit(1)
+      .as('first_pet_name'),
+
+    // Build and select an expression using the expression builder
+    or([
+      eb('first_name', '=', 'Jennifer'),
+      eb('first_name', '=', 'Arnold')
+    ]).as('is_jennifer_or_arnold'),
+
+    // Select a raw SQL expression
+    sql<string>`concat(first_name, ' ', last_name)`.as('full_name'),
+
+    // Select a static string value
+    val('Some value').as('string_value'),
+
+    // Select a literal value
+    lit(42).as('literal_value'),
+  ])
+  .execute()
+```
+
+## Select All Columns
+
+The `selectAll` method generates `SELECT *`:
+
+```typescript
+const persons = await db
+  .selectFrom('person')
+  .selectAll()
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select * from "person"
+```
+
+Select all columns of a specific table:
+
+```typescript
+const persons = await db
+  .selectFrom('person')
+  .selectAll('person')
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select "person".* from "person"
+```
+
+## Filtering Results
+
+### Where Clause
+
+Filter results using the `where` method:
+
+```typescript
+const persons = await db
+  .selectFrom('person')
+  .selectAll()
+  .where('first_name', '=', 'Jennifer')
+  .execute()
+```
+
+See the [SelectQueryBuilder](/api/select-query-builder) documentation for more filtering options.
+
+## Ordering Results
+
+### Order By
+
+Order results using the `orderBy` method:
+
+```typescript
+const persons = await db
+  .selectFrom('person')
+  .selectAll()
+  .orderBy('first_name', 'asc')
+  .orderBy('last_name', 'desc')
+  .execute()
+```
+
+## Limiting Results
+
+### Limit and Offset
+
+Limit the number of results:
+
+```typescript
+const persons = await db
+  .selectFrom('person')
+  .selectAll()
+  .limit(10)
+  .offset(20)
+  .execute()
+```
+
+## Grouping Results
+
+### Group By
+
+Group results:
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .select(['first_name', (eb) => eb.fn.count('id').as('person_count')])
+  .groupBy('first_name')
+  .execute()
+```
+
+### Having Clause
+
+Filter grouped results:
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .select(['first_name', (eb) => eb.fn.count('id').as('person_count')])
+  .groupBy('first_name')
+  .having((eb) => eb.fn.count('id'), '>', 1)
+  .execute()
+```
+
+## Distinct Selection
+
+Make the selection distinct:
+
+```typescript
+const persons = await db.selectFrom('person')
+  .select('first_name')
+  .distinct()
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select distinct "first_name" from "person"
+```
+
+### Distinct On (PostgreSQL)
+
+```typescript
+const persons = await db.selectFrom('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  .where('pet.name', '=', 'Doggo')
+  .distinctOn('person.id')
+  .selectAll('person')
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select distinct on ("person"."id") "person".*
+from "person"
+inner join "pet" on "pet"."owner_id" = "person"."id"
+where "pet"."name" = $1
+```
+
+## Advanced Features
+
+### For Update/Share
+
+Add locking modifiers to select queries on supported databases:
+
+```typescript
+// For update
+const persons = await db
+  .selectFrom('person')
+  .selectAll()
+  .where('id', '=', 1)
+  .forUpdate()
+  .execute()
+
+// For share
+const persons = await db
+  .selectFrom('person')
+  .selectAll()
+  .where('id', '=', 1)
+  .forShare()
+  .execute()
+```
+
+### Skip Locked / No Wait
+
+```typescript
+const persons = await db
+  .selectFrom('person')
+  .selectAll()
+  .forUpdate()
+  .skipLocked()
+  .execute()
+
+const persons = await db
+  .selectFrom('person')
+  .selectAll()
+  .forUpdate()
+  .noWait()
+  .execute()
+```
+
+## Type Narrowing
+
+### Not Null Types
+
+Kysely has helpers for dealing with nullable types:
+
+```typescript
+import { NotNull } from 'kysely'
+import { jsonObjectFrom } from 'kysely/helpers/postgres'
+
+const persons = db
+  .selectFrom('person')
+  .select((eb) => [
+    'last_name',
+    jsonObjectFrom(
+      eb.selectFrom('pet')
+        .selectAll()
+        .limit(1)
+        .whereRef('person.id', '=', 'pet.owner_id')
+    ).$notNull().as('pet')
+  ])
+  .where('last_name', 'is not', null)
+  .$narrowType<{ last_name: NotNull }>()
+  .execute()
+```
+
+## Dynamic Queries
+
+Use the `dynamic` module for runtime column selection:
+
+```typescript
+const { ref } = db.dynamic
+
+// Some column name provided by the user
+const columnFromUserInput: string = 'first_name'
+
+type PossibleColumns = 'last_name' | 'first_name' | 'birthdate'
+
+const people = await db
+  .selectFrom('person')
+  .select([
+    ref<PossibleColumns>(columnFromUserInput),
+    'id'
+  ])
+  .execute()
+```
+
+## API Reference
+
+### Main Methods
+
+- `select()` - Add columns or expressions to select
+- `selectAll()` - Select all columns
+- `selectFrom()` - Specify the table(s) to select from
+- `where()` - Add WHERE conditions
+- `whereRef()` - Add WHERE conditions comparing two columns
+- `innerJoin()`, `leftJoin()`, `rightJoin()`, `fullJoin()` - Join tables
+- `orderBy()` - Order results
+- `groupBy()` - Group results
+- `having()` - Filter grouped results
+- `limit()` - Limit number of results
+- `offset()` - Skip a number of results
+- `distinct()` - Make selection distinct
+- `distinctOn()` - PostgreSQL distinct on specific columns
+- `forUpdate()`, `forShare()` - Add locking modifiers
+- `skipLocked()`, `noWait()` - Add row lock modifiers
+- `modifyFront()`, `modifyEnd()` - Add custom SQL to query
+- `execute()` - Execute the query and return all results
+- `executeTakeFirst()` - Execute and return first result or undefined
+- `executeTakeFirstOrThrow()` - Execute and return first result or throw

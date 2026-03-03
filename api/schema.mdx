@@ -1,0 +1,393 @@
+---
+title: SchemaModule
+description: Provides methods for building database schema in Kysely
+---
+
+The `SchemaModule` class provides methods for building and managing database schema. It allows you to create, alter, and drop tables, indexes, schemas, views, and types.
+
+## Overview
+
+The schema module is accessed through the `schema` property of the Kysely instance:
+
+```ts
+const db = new Kysely<Database>(config)
+db.schema // SchemaModule instance
+```
+
+## Methods
+
+### createTable
+
+Create a new table.
+
+```ts
+createTable<TB extends string>(table: TB): CreateTableBuilder<TB, never>
+```
+
+<ParamField path="table" type="string" required>
+  The name of the table to create
+</ParamField>
+
+<ResponseField name="returns" type="CreateTableBuilder<TB, never>">
+  A builder for creating table definitions
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createTable('person')
+  .addColumn('id', 'integer', col => col.primaryKey().autoIncrement())
+  .addColumn('first_name', 'varchar', col => col.notNull())
+  .addColumn('last_name', 'varchar', col => col.notNull())
+  .addColumn('gender', 'varchar')
+  .execute()
+```
+
+Create a table with a foreign key:
+
+```ts
+await db.schema
+  .createTable('pet')
+  .addColumn('id', 'integer', col => col.primaryKey().autoIncrement())
+  .addColumn('owner_id', 'integer', col => col
+    .references('person.id')
+    .onDelete('cascade')
+  )
+  .execute()
+```
+
+Create a table with a table-level foreign key constraint (for MySQL 5.X):
+
+```ts
+await db.schema
+  .createTable('pet')
+  .addColumn('id', 'integer', col => col.primaryKey().autoIncrement())
+  .addColumn('owner_id', 'integer')
+  .addForeignKeyConstraint(
+    'pet_owner_id_foreign', ['owner_id'], 'person', ['id'],
+    (constraint) => constraint.onDelete('cascade')
+  )
+  .execute()
+```
+
+### dropTable
+
+Drop a table.
+
+```ts
+dropTable(table: string): DropTableBuilder
+```
+
+<ParamField path="table" type="string" required>
+  The name of the table to drop
+</ParamField>
+
+<ResponseField name="returns" type="DropTableBuilder">
+  A builder for dropping tables
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .dropTable('person')
+  .execute()
+```
+
+### createIndex
+
+Create a new index.
+
+```ts
+createIndex(indexName: string): CreateIndexBuilder
+```
+
+<ParamField path="indexName" type="string" required>
+  The name of the index to create
+</ParamField>
+
+<ResponseField name="returns" type="CreateIndexBuilder">
+  A builder for creating indexes
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createIndex('person_full_name_unique_index')
+  .on('person')
+  .columns(['first_name', 'last_name'])
+  .execute()
+```
+
+### dropIndex
+
+Drop an index.
+
+```ts
+dropIndex(indexName: string): DropIndexBuilder
+```
+
+<ParamField path="indexName" type="string" required>
+  The name of the index to drop
+</ParamField>
+
+<ResponseField name="returns" type="DropIndexBuilder">
+  A builder for dropping indexes
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .dropIndex('person_full_name_unique_index')
+  .execute()
+```
+
+### createSchema
+
+Create a new schema.
+
+```ts
+createSchema(schema: string): CreateSchemaBuilder
+```
+
+<ParamField path="schema" type="string" required>
+  The name of the schema to create
+</ParamField>
+
+<ResponseField name="returns" type="CreateSchemaBuilder">
+  A builder for creating schemas
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createSchema('some_schema')
+  .execute()
+```
+
+### dropSchema
+
+Drop a schema.
+
+```ts
+dropSchema(schema: string): DropSchemaBuilder
+```
+
+<ParamField path="schema" type="string" required>
+  The name of the schema to drop
+</ParamField>
+
+<ResponseField name="returns" type="DropSchemaBuilder">
+  A builder for dropping schemas
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .dropSchema('some_schema')
+  .execute()
+```
+
+### alterTable
+
+Alter a table.
+
+```ts
+alterTable(table: string): AlterTableBuilder
+```
+
+<ParamField path="table" type="string" required>
+  The name of the table to alter
+</ParamField>
+
+<ResponseField name="returns" type="AlterTableBuilder">
+  A builder for altering tables
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .alterTable('person')
+  .alterColumn('first_name', (ac) => ac.setDataType('text'))
+  .execute()
+```
+
+### createView
+
+Create a new view.
+
+```ts
+createView(viewName: string): CreateViewBuilder
+```
+
+<ParamField path="viewName" type="string" required>
+  The name of the view to create
+</ParamField>
+
+<ResponseField name="returns" type="CreateViewBuilder">
+  A builder for creating views
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createView('dogs')
+  .orReplace()
+  .as(db.selectFrom('pet').selectAll().where('species', '=', 'dog'))
+  .execute()
+```
+
+### dropView
+
+Drop a view.
+
+```ts
+dropView(viewName: string): DropViewBuilder
+```
+
+<ParamField path="viewName" type="string" required>
+  The name of the view to drop
+</ParamField>
+
+<ResponseField name="returns" type="DropViewBuilder">
+  A builder for dropping views
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .dropView('dogs')
+  .ifExists()
+  .execute()
+```
+
+### refreshMaterializedView
+
+Refresh a materialized view.
+
+```ts
+refreshMaterializedView(viewName: string): RefreshMaterializedViewBuilder
+```
+
+<ParamField path="viewName" type="string" required>
+  The name of the materialized view to refresh
+</ParamField>
+
+<ResponseField name="returns" type="RefreshMaterializedViewBuilder">
+  A builder for refreshing materialized views
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .refreshMaterializedView('my_view')
+  .concurrently()
+  .execute()
+```
+
+### createType
+
+Create a new type.
+
+Only some dialects like PostgreSQL have user-defined types.
+
+```ts
+createType(typeName: string): CreateTypeBuilder
+```
+
+<ParamField path="typeName" type="string" required>
+  The name of the type to create
+</ParamField>
+
+<ResponseField name="returns" type="CreateTypeBuilder">
+  A builder for creating types
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createType('species')
+  .asEnum(['dog', 'cat', 'frog'])
+  .execute()
+```
+
+### dropType
+
+Drop a type.
+
+Only some dialects like PostgreSQL have user-defined types.
+
+```ts
+dropType(typeName: string): DropTypeBuilder
+```
+
+<ParamField path="typeName" type="string" required>
+  The name of the type to drop
+</ParamField>
+
+<ResponseField name="returns" type="DropTypeBuilder">
+  A builder for dropping types
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .dropType('species')
+  .ifExists()
+  .execute()
+```
+
+### withPlugin
+
+Returns a copy of this schema module with the given plugin installed.
+
+```ts
+withPlugin(plugin: KyselyPlugin): SchemaModule
+```
+
+<ParamField path="plugin" type="KyselyPlugin" required>
+  The plugin to install
+</ParamField>
+
+<ResponseField name="returns" type="SchemaModule">
+  A new SchemaModule instance with the plugin installed
+</ResponseField>
+
+### withoutPlugins
+
+Returns a copy of this schema module without any plugins.
+
+```ts
+withoutPlugins(): SchemaModule
+```
+
+<ResponseField name="returns" type="SchemaModule">
+  A new SchemaModule instance without plugins
+</ResponseField>
+
+### withSchema
+
+Sets the schema to be used for all subsequent operations.
+
+```ts
+withSchema(schema: string): SchemaModule
+```
+
+<ParamField path="schema" type="string" required>
+  The schema name to use
+</ParamField>
+
+<ResponseField name="returns" type="SchemaModule">
+  A new SchemaModule instance that uses the specified schema
+</ResponseField>

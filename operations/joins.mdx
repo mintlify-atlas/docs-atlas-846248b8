@@ -1,0 +1,397 @@
+---
+title: Join Operations
+description: Learn how to use join operations in Kysely to combine data from multiple tables with type-safe join statements.
+---
+
+Kysely supports all common SQL join types: inner join, left join, right join, full join, cross join, and lateral join. All join methods are available on select, update, and delete query builders.
+
+## Inner Join
+
+### Simple Inner Join
+
+Simple inner joins can be done by providing a table name and two columns to join:
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  // `select` needs to come after the call to `innerJoin` so
+  // that you can select from the joined table.
+  .select(['person.id', 'pet.name as pet_name'])
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select "person"."id", "pet"."name" as "pet_name"
+from "person"
+inner join "pet"
+on "pet"."owner_id" = "person"."id"
+```
+
+### Aliased Inner Join
+
+You can give an alias for the joined table:
+
+```typescript
+await db.selectFrom('person')
+  .innerJoin('pet as p', 'p.owner_id', 'person.id')
+  .where('p.name', '=', 'Doggo')
+  .selectAll()
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select *
+from "person"
+inner join "pet" as "p"
+on "p"."owner_id" = "person"."id"
+where "p"."name" = $1
+```
+
+### Complex Join Conditions
+
+You can provide a function as the second argument to get a join builder for creating more complex joins:
+
+```typescript
+await db.selectFrom('person')
+  .innerJoin(
+    'pet',
+    (join) => join
+      .onRef('pet.owner_id', '=', 'person.id')
+      .on('pet.name', '=', 'Doggo')
+      .on((eb) => eb.or([
+        eb('person.age', '>', 18),
+        eb('person.age', '<', 100)
+      ]))
+  )
+  .selectAll()
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select *
+from "person"
+inner join "pet"
+on "pet"."owner_id" = "person"."id"
+and "pet"."name" = $1
+and (
+  "person"."age" > $2
+  OR "person"."age" < $3
+)
+```
+
+### Subquery Join
+
+You can join a subquery by providing a callback:
+
+```typescript
+const result = await db.selectFrom('person')
+  .innerJoin(
+    (eb) => eb
+      .selectFrom('pet')
+      .select(['owner_id as owner', 'name'])
+      .where('name', '=', 'Doggo')
+      .as('doggos'),
+    (join) => join
+      .onRef('doggos.owner', '=', 'person.id'),
+  )
+  .selectAll('doggos')
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select "doggos".*
+from "person"
+inner join (
+  select "owner_id" as "owner", "name"
+  from "pet"
+  where "name" = $1
+) as "doggos"
+on "doggos"."owner" = "person"."id"
+```
+
+## Left Join
+
+Left join works exactly like inner join but adds a `LEFT JOIN` instead:
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .leftJoin('pet', 'pet.owner_id', 'person.id')
+  .selectAll()
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select *
+from "person"
+left join "pet"
+on "pet"."owner_id" = "person"."id"
+```
+
+All the same patterns work:
+
+```typescript
+// With alias
+await db.selectFrom('person')
+  .leftJoin('pet as p', 'p.owner_id', 'person.id')
+  .selectAll()
+  .execute()
+
+// With complex conditions
+await db.selectFrom('person')
+  .leftJoin('pet', (join) => join
+    .onRef('pet.owner_id', '=', 'person.id')
+    .on('pet.name', '=', 'Doggo')
+  )
+  .selectAll()
+  .execute()
+
+// With subquery
+await db.selectFrom('person')
+  .leftJoin(
+    (eb) => eb.selectFrom('pet').select('owner_id').as('pet_owners'),
+    (join) => join.onRef('pet_owners.owner_id', '=', 'person.id')
+  )
+  .selectAll()
+  .execute()
+```
+
+## Right Join
+
+Right join works exactly like inner join but adds a `RIGHT JOIN` instead:
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .rightJoin('pet', 'pet.owner_id', 'person.id')
+  .selectAll()
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select *
+from "person"
+right join "pet"
+on "pet"."owner_id" = "person"."id"
+```
+
+## Full Join
+
+Full join is supported by PostgreSQL, MS SQL Server, and SQLite:
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .fullJoin('pet', 'pet.owner_id', 'person.id')
+  .selectAll()
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select *
+from "person"
+full join "pet"
+on "pet"."owner_id" = "person"."id"
+```
+
+## Cross Join
+
+Cross join produces a Cartesian product of rows:
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .crossJoin('pet')
+  .selectAll()
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select *
+from "person"
+cross join "pet"
+```
+
+## Lateral Join
+
+Lateral joins allow subqueries to reference columns from preceding tables:
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .innerJoinLateral(
+    (eb) => eb
+      .selectFrom('pet')
+      .select('pet.name')
+      .whereRef('pet.owner_id', '=', 'person.id')
+      .orderBy('pet.name')
+      .limit(1)
+      .as('first_pet'),
+    (join) => join.onTrue()
+  )
+  .select(['person.id', 'first_pet.name'])
+  .execute()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+select "person"."id", "first_pet"."name"
+from "person"
+inner join lateral (
+  select "pet"."name"
+  from "pet"
+  where "pet"."owner_id" = "person"."id"
+  order by "pet"."name"
+  limit 1
+) as "first_pet" on true
+```
+
+You can also use `leftJoinLateral`:
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .leftJoinLateral(
+    (eb) => eb
+      .selectFrom('pet')
+      .select('pet.name')
+      .whereRef('pet.owner_id', '=', 'person.id')
+      .limit(1)
+      .as('latest_pet'),
+    (join) => join.onTrue()
+  )
+  .selectAll()
+  .execute()
+```
+
+## Join Builder Methods
+
+The join builder (the callback function in complex joins) has the following methods:
+
+### on
+
+Add a condition to the ON clause:
+
+```typescript
+.innerJoin('pet', (join) => join
+  .on('pet.species', '=', 'dog')
+)
+```
+
+### onRef
+
+Compare two columns in the ON clause:
+
+```typescript
+.innerJoin('pet', (join) => join
+  .onRef('pet.owner_id', '=', 'person.id')
+)
+```
+
+### onTrue
+
+Add `on true` (useful for lateral joins):
+
+```typescript
+.innerJoinLateral(subquery, (join) => join.onTrue())
+```
+
+You can combine multiple conditions:
+
+```typescript
+.innerJoin('pet', (join) => join
+  .onRef('pet.owner_id', '=', 'person.id')
+  .on('pet.species', '=', 'dog')
+  .on((eb) => eb.or([
+    eb('pet.age', '>', 5),
+    eb('pet.age', '<', 1)
+  ]))
+)
+```
+
+## Joins in Update Queries
+
+### PostgreSQL: From Clause
+
+```typescript
+await db
+  .updateTable('person')
+  .from('pet')
+  .set((eb) => ({
+    first_name: eb.ref('pet.name')
+  }))
+  .whereRef('pet.owner_id', '=', 'person.id')
+  .execute()
+```
+
+### MySQL: Direct Joins
+
+```typescript
+await db
+  .updateTable(['person', 'pet'])
+  .set('person.first_name', 'Updated')
+  .whereRef('person.id', '=', 'pet.owner_id')
+  .execute()
+```
+
+### PostgreSQL: Using Join Methods
+
+```typescript
+await db
+  .updateTable('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  .set('person.first_name', 'John')
+  .where('pet.name', '=', 'Doggo')
+  .execute()
+```
+
+## Joins in Delete Queries
+
+```typescript
+await db
+  .deleteFrom('person')
+  .using('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  .where('pet.name', '=', 'Doggo')
+  .execute()
+```
+
+## API Reference
+
+### Join Methods
+
+- `innerJoin(table, column1, column2)` - Simple inner join
+- `innerJoin(table, callback)` - Inner join with complex conditions
+- `leftJoin(table, column1, column2)` - Simple left join
+- `leftJoin(table, callback)` - Left join with complex conditions
+- `rightJoin(table, column1, column2)` - Simple right join
+- `rightJoin(table, callback)` - Right join with complex conditions
+- `fullJoin(table, column1, column2)` - Simple full join
+- `fullJoin(table, callback)` - Full join with complex conditions
+- `crossJoin(table)` - Cross join
+- `innerJoinLateral(callback, joinCallback)` - Lateral inner join
+- `leftJoinLateral(callback, joinCallback)` - Lateral left join
+
+### Join Builder Methods
+
+- `on(column, operator, value)` - Add ON condition
+- `onRef(column1, operator, column2)` - Compare two columns
+- `onTrue()` - Add ON true

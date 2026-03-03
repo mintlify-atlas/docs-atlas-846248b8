@@ -1,0 +1,197 @@
+---
+title: Selectable
+description: Extract the select type from a table interface in Kysely
+---
+
+## Type Signature
+
+```typescript
+type Selectable<R> = DrainOuterGeneric<{
+  [K in NonNeverSelectKeys<R>]: SelectType<R[K]>
+}>
+```
+
+## Overview
+
+`Selectable<T>` is a utility type that extracts the select type from all columns in a table interface. It resolves the `SelectType` from any [`ColumnType`](/api/types/column-type) definitions and creates a type representing what you get when selecting from the table.
+
+## Type Parameters
+
+<ParamField path="R" type="interface" required>
+  A table interface with column definitions.
+</ParamField>
+
+## Behavior
+
+- Extracts the first type parameter (`SelectType`) from each `ColumnType<SelectType, InsertType, UpdateType>`
+- For regular types without `ColumnType`, uses the type as-is
+- Excludes columns where `SelectType` is `never`
+- All fields in the resulting type are required (not optional)
+
+## Examples
+
+### Basic Usage
+
+```typescript
+import { Generated, ColumnType, Selectable } from 'kysely'
+
+interface PersonTable {
+  id: Generated<number>
+  first_name: string
+  last_name: string
+  created_at: ColumnType<Date, string, never>
+}
+
+type Person = Selectable<PersonTable>
+// {
+//   id: number
+//   first_name: string
+//   last_name: string
+//   created_at: Date
+// }
+```
+
+### Using with Query Results
+
+```typescript
+interface Database {
+  person: PersonTable
+}
+
+const db = new Kysely<Database>({ /* ... */ })
+
+// Type-safe query results
+const people: Person[] = await db
+  .selectFrom('person')
+  .selectAll()
+  .execute()
+
+// Use in function signatures
+function displayPerson(person: Person) {
+  console.log(`${person.first_name} ${person.last_name}`)
+  console.log(`ID: ${person.id}`)
+  console.log(`Created: ${person.created_at.toISOString()}`)
+}
+
+for (const person of people) {
+  displayPerson(person)
+}
+```
+
+### With Complex Column Types
+
+```typescript
+interface ProductTable {
+  id: GeneratedAlways<number>
+  name: string
+  price: number
+  // JSON column: string on insert/update, object on select
+  metadata: ColumnType<{ tags: string[] }, string, string>
+  created_at: Generated<Date>
+  // Computed column: read-only
+  display_name: ColumnType<string, never, never>
+}
+
+type Product = Selectable<ProductTable>
+// {
+//   id: number
+//   name: string
+//   price: number
+//   metadata: { tags: string[] }
+//   created_at: Date
+//   display_name: string
+// }
+```
+
+### Partial Selects
+
+When selecting specific columns, TypeScript infers the exact type:
+
+```typescript
+// Inferred type: { id: number, first_name: string }[]
+const names = await db
+  .selectFrom('person')
+  .select(['id', 'first_name'])
+  .execute()
+
+// Using Selectable for the full type
+type FullPerson = Selectable<PersonTable>
+
+// Using Pick for partial types
+type PersonName = Pick<FullPerson, 'id' | 'first_name'>
+```
+
+### Excluding Never Columns
+
+Columns with `never` as the select type are excluded:
+
+```typescript
+interface SecretTable {
+  id: Generated<number>
+  user_id: number
+  password_hash: ColumnType<never, string, string>
+}
+
+type Secret = Selectable<SecretTable>
+// {
+//   id: number
+//   user_id: number
+//   // password_hash is excluded
+// }
+```
+
+## Common Patterns
+
+### Combining with Other Utility Types
+
+```typescript
+// Partial updates using both Selectable and Updateable
+import { Updateable } from 'kysely'
+
+type Person = Selectable<PersonTable>
+type PersonUpdate = Updateable<PersonTable>
+
+async function updatePerson(
+  id: number,
+  updates: PersonUpdate
+): Promise<Person> {
+  return await db
+    .updateTable('person')
+    .set(updates)
+    .where('id', '=', id)
+    .returningAll()
+    .executeTakeFirstOrThrow()
+}
+```
+
+### Repository Pattern
+
+```typescript
+class PersonRepository {
+  async findById(id: number): Promise<Person | undefined> {
+    return await db
+      .selectFrom('person')
+      .selectAll()
+      .where('id', '=', id)
+      .executeTakeFirst()
+  }
+
+  async findAll(): Promise<Person[]> {
+    return await db
+      .selectFrom('person')
+      .selectAll()
+      .execute()
+  }
+}
+```
+
+## Related Types
+
+- [`ColumnType<SelectType, InsertType, UpdateType>`](/api/types/column-type) - Define different types for different operations
+- [`Insertable<T>`](/api/types/insertable) - Extract insert types from a table interface
+- [`Updateable<T>`](/api/types/updateable) - Extract update types from a table interface
+- [`Generated<T>`](/api/types/generated) - Shortcut for database-generated columns
+
+## Source
+
+[View source on GitHub](https://github.com/kysely-org/kysely/blob/master/src/util/column-type.ts)

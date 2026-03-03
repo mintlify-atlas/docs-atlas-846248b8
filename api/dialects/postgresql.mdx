@@ -1,0 +1,246 @@
+---
+title: 'PostgresDialect'
+description: 'PostgreSQL dialect using the pg library'
+---
+
+## Overview
+
+PostgreSQL dialect that uses the [pg](https://node-postgres.com/) library (node-postgres). This is the recommended way to connect Kysely to PostgreSQL databases.
+
+**Source:** `src/dialect/postgres/postgres-dialect.ts:43`
+
+## Installation
+
+Install the required peer dependencies:
+
+```bash
+npm install pg
+npm install --save-dev @types/pg
+```
+
+## Basic Usage
+
+<CodeGroup>
+```typescript Eager Pool
+import { Kysely, PostgresDialect } from 'kysely'
+import { Pool } from 'pg'
+
+const db = new Kysely<Database>({
+  dialect: new PostgresDialect({
+    pool: new Pool({
+      host: 'localhost',
+      database: 'mydatabase',
+      user: 'myuser',
+      password: 'mypassword',
+      port: 5432,
+      max: 10,
+    })
+  })
+})
+```
+
+```typescript Lazy Pool
+import { Kysely, PostgresDialect } from 'kysely'
+import { Pool } from 'pg'
+
+// Pool is created only when first query is executed
+const db = new Kysely<Database>({
+  dialect: new PostgresDialect({
+    pool: async () => new Pool({
+      host: 'localhost',
+      database: 'mydatabase',
+      user: 'myuser',
+      password: 'mypassword',
+    })
+  })
+})
+```
+</CodeGroup>
+
+## Configuration
+
+### PostgresDialectConfig
+
+**Source:** `src/dialect/postgres/postgres-dialect-config.ts:6`
+
+<ParamField path="pool" type="PostgresPool | (() => Promise<PostgresPool>)" required>
+  A postgres Pool instance or a function that returns one.
+  
+  If a function is provided, it's called once when the first query is executed. This allows for lazy initialization of the connection pool.
+  
+  See [node-postgres Pool documentation](https://node-postgres.com/apis/pool) for available pool options.
+</ParamField>
+
+<ParamField path="cursor" type="PostgresCursorConstructor">
+  Optional cursor constructor for streaming large result sets.
+  
+  Requires the [pg-cursor](https://github.com/brianc/node-postgres/tree/master/packages/pg-cursor) package.
+
+  ```typescript
+  import { PostgresDialect } from 'kysely'
+  import { Pool } from 'pg'
+  import Cursor from 'pg-cursor'
+
+  new PostgresDialect({
+    cursor: Cursor,
+    pool: new Pool({ /* ... */ })
+  })
+  ```
+</ParamField>
+
+<ParamField path="onCreateConnection" type="(connection: DatabaseConnection) => Promise<void>">
+  Called once for each created connection. Useful for setting up connection-level configuration.
+
+  ```typescript
+  new PostgresDialect({
+    pool: new Pool({ /* ... */ }),
+    onCreateConnection: async (connection) => {
+      await connection.executeQuery(
+        CompiledQuery.raw('SET timezone = "UTC"')
+      )
+    }
+  })
+  ```
+</ParamField>
+
+<ParamField path="onReserveConnection" type="(connection: DatabaseConnection) => Promise<void>">
+  Called every time a connection is acquired from the pool. Use this for per-query setup that needs to run every time.
+
+  ```typescript
+  new PostgresDialect({
+    pool: new Pool({ /* ... */ }),
+    onReserveConnection: async (connection) => {
+      // Run on every connection acquisition
+      await connection.executeQuery(
+        CompiledQuery.raw('SET search_path = public')
+      )
+    }
+  })
+  ```
+</ParamField>
+
+## Connection Pooling
+
+The PostgreSQL dialect uses the `pg` library's built-in connection pooling. Here are some recommended pool settings:
+
+```typescript
+import { Pool } from 'pg'
+
+const pool = new Pool({
+  // Connection settings
+  host: 'localhost',
+  port: 5432,
+  database: 'mydb',
+  user: 'user',
+  password: 'password',
+
+  // Pool settings
+  max: 10, // Maximum number of connections
+  min: 2, // Minimum number of connections
+  idleTimeoutMillis: 30000, // Close idle connections after 30s
+  connectionTimeoutMillis: 2000, // Return error after 2s if connection cannot be established
+})
+```
+
+## Streaming with Cursors
+
+For large result sets, you can use cursors to stream results:
+
+<Steps>
+  <Step title="Install pg-cursor">
+    ```bash
+    npm install pg-cursor
+    npm install --save-dev @types/pg-cursor
+    ```
+  </Step>
+
+  <Step title="Configure the dialect">
+    ```typescript
+    import Cursor from 'pg-cursor'
+
+    const db = new Kysely<Database>({
+      dialect: new PostgresDialect({
+        cursor: Cursor,
+        pool: new Pool({ /* ... */ })
+      })
+    })
+    ```
+  </Step>
+
+  <Step title="Use streaming queries">
+    ```typescript
+    const stream = db
+      .selectFrom('person')
+      .selectAll()
+      .stream()
+
+    for await (const row of stream) {
+      console.log(row)
+    }
+    ```
+  </Step>
+</Steps>
+
+## SSL/TLS Configuration
+
+To connect using SSL:
+
+```typescript
+import { Pool } from 'pg'
+import fs from 'fs'
+
+const pool = new Pool({
+  host: 'localhost',
+  database: 'mydb',
+  ssl: {
+    rejectUnauthorized: true,
+    ca: fs.readFileSync('/path/to/ca-cert.pem').toString(),
+    key: fs.readFileSync('/path/to/client-key.pem').toString(),
+    cert: fs.readFileSync('/path/to/client-cert.pem').toString(),
+  }
+})
+```
+
+## Environment Variables
+
+The `pg` library automatically reads these environment variables:
+
+- `PGHOST` - Database host
+- `PGPORT` - Database port
+- `PGDATABASE` - Database name
+- `PGUSER` - Database user
+- `PGPASSWORD` - Database password
+
+```typescript
+import { Pool } from 'pg'
+
+// Uses environment variables
+const pool = new Pool()
+```
+
+## Related Types
+
+### PostgresPool
+
+**Source:** `src/dialect/postgres/postgres-dialect-config.ts:52`
+
+The subset of the `pg` Pool interface that Kysely requires:
+
+```typescript
+interface PostgresPool {
+  connect(): Promise<PostgresPoolClient>
+  end(): Promise<void>
+}
+```
+
+### PostgresPoolClient
+
+**Source:** `src/dialect/postgres/postgres-dialect-config.ts:57`
+
+```typescript
+interface PostgresPoolClient {
+  query<R>(sql: string, parameters: ReadonlyArray<unknown>): Promise<PostgresQueryResult<R>>
+  query<R>(cursor: PostgresCursor<R>): PostgresCursor<R>
+  release(): void
+}
+```

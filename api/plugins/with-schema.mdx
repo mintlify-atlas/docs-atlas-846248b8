@@ -1,0 +1,220 @@
+---
+title: WithSchemaPlugin
+description: Automatically adds a schema prefix to all table references in queries
+---
+
+## Overview
+
+The `WithSchemaPlugin` automatically adds a schema prefix to all table references in your queries. This is useful when working with databases that use multiple schemas and you want all queries to target a specific schema without manually adding the schema to each table reference.
+
+## Installation
+
+```typescript
+import { Kysely, WithSchemaPlugin } from 'kysely'
+
+const db = new Kysely<Database>({
+  dialect,
+  plugins: [new WithSchemaPlugin('my_schema')]
+})
+```
+
+## Constructor
+
+```typescript
+constructor(schema: string)
+```
+
+**Parameters:**
+
+- `schema` - The schema name to add to all table references
+
+**Example:**
+
+```typescript
+const plugin = new WithSchemaPlugin('public')
+```
+
+**Source:** ~/workspace/source/src/plugin/with-schema/with-schema-plugin.ts:14
+
+## Usage Example
+
+```typescript
+import { Kysely, PostgresDialect, WithSchemaPlugin } from 'kysely'
+import { Pool } from 'pg'
+
+interface Database {
+  users: {
+    id: number
+    name: string
+  }
+  posts: {
+    id: number
+    userId: number
+    title: string
+  }
+}
+
+const db = new Kysely<Database>({
+  dialect: new PostgresDialect({
+    pool: new Pool({
+      host: 'localhost',
+      database: 'mydb'
+    })
+  }),
+  plugins: [new WithSchemaPlugin('my_schema')]
+})
+
+// This query:
+const result = await db
+  .selectFrom('users')
+  .innerJoin('posts', 'posts.userId', 'users.id')
+  .selectAll()
+  .execute()
+
+// Generates SQL like:
+// SELECT * FROM "my_schema"."users"
+// INNER JOIN "my_schema"."posts" ON "posts"."user_id" = "users"."id"
+```
+
+## Methods
+
+### transformQuery
+
+```typescript
+transformQuery(args: PluginTransformQueryArgs): RootOperationNode
+```
+
+Transforms the query operation node tree by adding the schema prefix to all table references that don't already have a schema.
+
+**Parameters:**
+
+- `args.queryId` - Unique identifier for the query
+- `args.node` - The root operation node to transform
+
+**Returns:** The transformed operation node with schema prefixes added
+
+**Source:** ~/workspace/source/src/plugin/with-schema/with-schema-plugin.ts:18
+
+### transformResult
+
+```typescript
+async transformResult(
+  args: PluginTransformResultArgs
+): Promise<QueryResult<UnknownRow>>
+```
+
+Passes through the result unchanged. This plugin only modifies queries, not results.
+
+**Parameters:**
+
+- `args.queryId` - Unique identifier for the query
+- `args.result` - The query result
+
+**Returns:** The original, unmodified result
+
+**Source:** ~/workspace/source/src/plugin/with-schema/with-schema-plugin.ts:22
+
+## Behavior Details
+
+### What Gets Prefixed
+
+The plugin adds the schema prefix to:
+
+- Table references in `FROM` clauses
+- Table references in `JOIN` clauses
+- Table references in `INTO` clauses (for INSERT)
+- Table references in `UPDATE` statements
+- References in `REFERENCES` clauses (foreign keys)
+- Table names in DDL statements (CREATE/ALTER/DROP TABLE, etc.)
+
+### What Doesn't Get Prefixed
+
+- Tables that already have an explicit schema
+- Common Table Expressions (CTEs) defined in `WITH` clauses
+- Certain schemaless functions like `json_agg` and `to_json`
+
+### Example with CTEs
+
+```typescript
+const result = await db
+  .with('recent_users', (db) => 
+    db.selectFrom('users')
+      .where('created_at', '>', new Date('2024-01-01'))
+      .selectAll()
+  )
+  .selectFrom('recent_users')  // CTE - no schema added
+  .innerJoin('posts', 'posts.userId', 'recent_users.id')  // Regular table - schema added
+  .selectAll()
+  .execute()
+
+// Generated SQL:
+// WITH "recent_users" AS (
+//   SELECT * FROM "my_schema"."users" WHERE "created_at" > $1
+// )
+// SELECT * FROM "recent_users"
+// INNER JOIN "my_schema"."posts" ON "posts"."user_id" = "recent_users"."id"
+```
+
+## Use Cases
+
+### Multi-tenant Applications
+
+Use different schema plugins for different tenants:
+
+```typescript
+function createTenantDb(tenantId: string) {
+  return new Kysely<Database>({
+    dialect,
+    plugins: [new WithSchemaPlugin(`tenant_${tenantId}`)]
+  })
+}
+
+const tenant1Db = createTenantDb('1')
+const tenant2Db = createTenantDb('2')
+```
+
+### Development vs Production
+
+Use different schemas for different environments:
+
+```typescript
+const schema = process.env.NODE_ENV === 'production' 
+  ? 'production_schema' 
+  : 'dev_schema'
+
+const db = new Kysely<Database>({
+  dialect,
+  plugins: [new WithSchemaPlugin(schema)]
+})
+```
+
+### Per-Query Schema Override
+
+Apply schema plugin to specific queries:
+
+```typescript
+// Default queries use no schema
+const db = new Kysely<Database>({ dialect })
+
+// This specific query uses a schema
+const result = await db
+  .selectFrom('users')
+  .selectAll()
+  .withPlugin(new WithSchemaPlugin('archive_schema'))
+  .execute()
+```
+
+## Implementation Details
+
+The plugin uses a `WithSchemaTransformer` that extends `OperationNodeTransformer` to traverse the query operation node tree. It:
+
+1. Collects all CTEs to avoid adding schemas to them
+2. Collects all schemable identifiers (tables)
+3. Transforms `SchemableIdentifierNode` instances by adding the schema
+4. Handles special cases like aggregate functions and select modifiers
+
+## See Also
+
+- [KyselyPlugin Interface](/api/plugins/overview)
+- [Creating Custom Plugins](/api/plugins/custom-plugins)
+- [Schema Documentation](/api/schema)

@@ -1,0 +1,628 @@
+---
+title: 'SelectQueryBuilder'
+description: 'Build and execute SELECT queries'
+---
+
+# SelectQueryBuilder
+
+Builder for constructing SELECT queries with type-safe column selection, joins, filtering, and more.
+
+## Type Parameters
+
+- `DB` - The database schema type
+- `TB` - Union of table names available in the FROM clause
+- `O` - The output row type (columns selected)
+
+## Methods
+
+### select
+
+```ts
+select<SE extends SelectExpression<DB, TB>>(
+  selections: ReadonlyArray<SE>
+): SelectQueryBuilder<DB, TB, O & Selection<DB, TB, SE>>
+
+select<SE extends SelectExpression<DB, TB>>(
+  selection: SE
+): SelectQueryBuilder<DB, TB, O & Selection<DB, TB, SE>>
+
+select<CB extends SelectCallback<DB, TB>>(
+  callback: CB
+): SelectQueryBuilder<DB, TB, O & CallbackSelection<DB, TB, CB>>
+```
+
+Adds a select statement to the query. When a column is selected, Kysely adds its type to the return type.
+
+Select calls are additive. Calling `select('id').select('first_name')` is the same as `select(['id', 'first_name'])`.
+
+**Examples:**
+
+Select a single column:
+
+```ts
+const persons = await db
+  .selectFrom('person')
+  .select('id')
+  .where('first_name', '=', 'Arnold')
+  .execute()
+```
+
+Select multiple columns:
+
+```ts
+const persons = await db
+  .selectFrom('person')
+  .select(['person.id', 'first_name'])
+  .execute()
+```
+
+Select with aliases:
+
+```ts
+const persons = await db
+  .selectFrom('person as p')
+  .select([
+    'first_name as fn',
+    'p.last_name as ln'
+  ])
+  .execute()
+```
+
+Select complex expressions:
+
+```ts
+import { sql } from 'kysely'
+
+const persons = await db.selectFrom('person')
+  .select(({ eb, selectFrom, or, val, lit }) => [
+    // Correlated subquery
+    selectFrom('pet')
+      .whereRef('person.id', '=', 'pet.owner_id')
+      .select('pet.name')
+      .orderBy('pet.name')
+      .limit(1)
+      .as('first_pet_name'),
+
+    // Expression builder
+    or([
+      eb('first_name', '=', 'Jennifer'),
+      eb('first_name', '=', 'Arnold')
+    ]).as('is_jennifer_or_arnold'),
+
+    // Raw SQL
+    sql<string>`concat(first_name, ' ', last_name)`.as('full_name'),
+  ])
+  .execute()
+```
+
+### selectAll
+
+```ts
+selectAll(): SelectQueryBuilder<DB, TB, O & AllSelection<DB, TB>>
+
+selectAll<T extends TB>(
+  table: T
+): SelectQueryBuilder<DB, TB, O & Selectable<DB[T]>>
+
+selectAll<T extends TB>(
+  table: ReadonlyArray<T>
+): SelectQueryBuilder<DB, TB, O & AllSelection<DB, T>>
+```
+
+Adds a `select *` or `select table.*` clause to the query.
+
+**Examples:**
+
+Select all columns:
+
+```ts
+const persons = await db
+  .selectFrom('person')
+  .selectAll()
+  .execute()
+```
+
+Select all columns from a specific table:
+
+```ts
+const persons = await db
+  .selectFrom('person')
+  .selectAll('person')
+  .execute()
+```
+
+Select all columns from multiple tables:
+
+```ts
+const personsPets = await db
+  .selectFrom(['person', 'pet'])
+  .selectAll(['person', 'pet'])
+  .execute()
+```
+
+### where
+
+```ts
+where<RE extends ReferenceExpression<DB, TB>>(
+  lhs: RE,
+  op: ComparisonOperatorExpression,
+  rhs: OperandValueExpressionOrList<DB, TB, RE>
+): SelectQueryBuilder<DB, TB, O>
+
+where<E extends ExpressionOrFactory<DB, TB, SqlBool>>(
+  expression: E
+): SelectQueryBuilder<DB, TB, O>
+```
+
+Adds a WHERE clause to the query. Multiple where calls are combined with AND.
+
+See `WhereInterface` documentation for more examples.
+
+### whereRef
+
+```ts
+whereRef<LRE extends ReferenceExpression<DB, TB>, RRE extends ReferenceExpression<DB, TB>>(
+  lhs: LRE,
+  op: ComparisonOperatorExpression,
+  rhs: RRE
+): SelectQueryBuilder<DB, TB, O>
+```
+
+Adds a WHERE clause that compares two column references.
+
+### innerJoin
+
+```ts
+innerJoin<TE extends TableExpression<DB, TB>>(
+  table: TE,
+  k1: JoinReferenceExpression<DB, TB, TE>,
+  k2: JoinReferenceExpression<DB, TB, TE>
+): SelectQueryBuilderWithInnerJoin<DB, TB, O, TE>
+
+innerJoin<TE extends TableExpression<DB, TB>>(
+  table: TE,
+  callback: JoinCallbackExpression<DB, TB, TE>
+): SelectQueryBuilderWithInnerJoin<DB, TB, O, TE>
+```
+
+Joins another table using an inner join.
+
+**Examples:**
+
+Simple join:
+
+```ts
+const result = await db
+  .selectFrom('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  .select(['person.id', 'pet.name as pet_name'])
+  .execute()
+```
+
+Join with callback:
+
+```ts
+await db.selectFrom('person')
+  .innerJoin(
+    'pet',
+    (join) => join
+      .onRef('pet.owner_id', '=', 'person.id')
+      .on('pet.name', '=', 'Doggo')
+      .on((eb) => eb.or([
+        eb('person.age', '>', 18),
+        eb('person.age', '<', 100)
+      ]))
+  )
+  .selectAll()
+  .execute()
+```
+
+Subquery join:
+
+```ts
+const result = await db.selectFrom('person')
+  .innerJoin(
+    (eb) => eb
+      .selectFrom('pet')
+      .select(['owner_id as owner', 'name'])
+      .where('name', '=', 'Doggo')
+      .as('doggos'),
+    (join) => join
+      .onRef('doggos.owner', '=', 'person.id'),
+  )
+  .selectAll('doggos')
+  .execute()
+```
+
+### leftJoin
+
+```ts
+leftJoin<TE extends TableExpression<DB, TB>>(
+  table: TE,
+  ...
+): SelectQueryBuilderWithLeftJoin<DB, TB, O, TE>
+```
+
+Just like `innerJoin` but adds a left join instead of an inner join.
+
+### rightJoin
+
+```ts
+rightJoin<TE extends TableExpression<DB, TB>>(
+  table: TE,
+  ...
+): SelectQueryBuilderWithRightJoin<DB, TB, O, TE>
+```
+
+Just like `innerJoin` but adds a right join instead of an inner join.
+
+### fullJoin
+
+```ts
+fullJoin<TE extends TableExpression<DB, TB>>(
+  table: TE,
+  ...
+): SelectQueryBuilderWithFullJoin<DB, TB, O, TE>
+```
+
+Just like `innerJoin` but adds a full join instead of an inner join.
+
+Only supported by some dialects like PostgreSQL, MS SQL Server and SQLite.
+
+### orderBy
+
+```ts
+orderBy<OE extends OrderByExpression<DB, TB, O>>(
+  expr: OE,
+  modifiers?: OrderByModifiers
+): SelectQueryBuilder<DB, TB, O>
+```
+
+Adds an ORDER BY clause to the query.
+
+See `OrderByInterface` documentation for more examples.
+
+### groupBy
+
+```ts
+groupBy<GE extends GroupByArg<DB, TB, O>>(
+  groupBy: GE
+): SelectQueryBuilder<DB, TB, O>
+```
+
+Adds a GROUP BY clause to the query.
+
+**Example:**
+
+```ts
+import { sql } from 'kysely'
+
+await db
+  .selectFrom('person')
+  .select([
+    'first_name',
+    sql<string>`max(id)`.as('max_id')
+  ])
+  .groupBy('first_name')
+  .execute()
+```
+
+### having
+
+```ts
+having<RE extends ReferenceExpression<DB, TB>>(
+  lhs: RE,
+  op: ComparisonOperatorExpression,
+  rhs: OperandValueExpressionOrList<DB, TB, RE>
+): SelectQueryBuilder<DB, TB, O>
+
+having<E extends ExpressionOrFactory<DB, TB, SqlBool>>(
+  expression: E
+): SelectQueryBuilder<DB, TB, O>
+```
+
+Adds a HAVING clause to the query.
+
+See `HavingInterface` documentation for more examples.
+
+### limit
+
+```ts
+limit(
+  limit: ValueExpression<DB, TB, number | bigint | null>
+): SelectQueryBuilder<DB, TB, O>
+```
+
+Adds a LIMIT clause to the query.
+
+**Example:**
+
+```ts
+await db
+  .selectFrom('person')
+  .select('first_name')
+  .limit(10)
+  .execute()
+```
+
+### offset
+
+```ts
+offset(
+  offset: ValueExpression<DB, TB, number | bigint>
+): SelectQueryBuilder<DB, TB, O>
+```
+
+Adds an OFFSET clause to the query.
+
+**Example:**
+
+```ts
+await db
+  .selectFrom('person')
+  .select('first_name')
+  .limit(10)
+  .offset(10)
+  .execute()
+```
+
+### distinct
+
+```ts
+distinct(): SelectQueryBuilder<DB, TB, O>
+```
+
+Makes the selection distinct.
+
+**Example:**
+
+```ts
+const persons = await db.selectFrom('person')
+  .select('first_name')
+  .distinct()
+  .execute()
+```
+
+### distinctOn
+
+```ts
+distinctOn<RE extends ReferenceExpression<DB, TB>>(
+  selection: RE
+): SelectQueryBuilder<DB, TB, O>
+
+distinctOn<RE extends ReferenceExpression<DB, TB>>(
+  selections: ReadonlyArray<RE>
+): SelectQueryBuilder<DB, TB, O>
+```
+
+Adds DISTINCT ON expressions to the select clause.
+
+**Example:**
+
+```ts
+const persons = await db.selectFrom('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  .where('pet.name', '=', 'Doggo')
+  .distinctOn('person.id')
+  .selectAll('person')
+  .execute()
+```
+
+### union
+
+```ts
+union<E extends SetOperandExpression<DB, O>>(
+  expression: E
+): SelectQueryBuilder<DB, TB, O>
+```
+
+Combines another select query to this query using UNION.
+
+**Example:**
+
+```ts
+await db.selectFrom('person')
+  .select(['id', 'first_name as name'])
+  .union(db.selectFrom('pet').select(['id', 'name']))
+  .orderBy('name')
+  .execute()
+```
+
+### unionAll
+
+```ts
+unionAll<E extends SetOperandExpression<DB, O>>(
+  expression: E
+): SelectQueryBuilder<DB, TB, O>
+```
+
+Combines another select query using UNION ALL.
+
+### intersect
+
+```ts
+intersect<E extends SetOperandExpression<DB, O>>(
+  expression: E
+): SelectQueryBuilder<DB, TB, O>
+```
+
+Combines another select query using INTERSECT.
+
+### intersectAll
+
+```ts
+intersectAll<E extends SetOperandExpression<DB, O>>(
+  expression: E
+): SelectQueryBuilder<DB, TB, O>
+```
+
+Combines another select query using INTERSECT ALL.
+
+### except
+
+```ts
+except<E extends SetOperandExpression<DB, O>>(
+  expression: E
+): SelectQueryBuilder<DB, TB, O>
+```
+
+Combines another select query using EXCEPT.
+
+### exceptAll
+
+```ts
+exceptAll<E extends SetOperandExpression<DB, O>>(
+  expression: E
+): SelectQueryBuilder<DB, TB, O>
+```
+
+Combines another select query using EXCEPT ALL.
+
+### as
+
+```ts
+as<A extends string>(alias: A): AliasedSelectQueryBuilder<O, A>
+```
+
+Gives an alias for the query. Only useful for sub queries.
+
+**Example:**
+
+```ts
+const pets = await db.selectFrom('pet')
+  .selectAll('pet')
+  .select(
+    (qb) => qb.selectFrom('person')
+      .select('first_name')
+      .whereRef('pet.owner_id', '=', 'person.id')
+      .as('owner_first_name')
+  )
+  .execute()
+
+pets[0].owner_first_name
+```
+
+### $call
+
+```ts
+$call<T>(func: (qb: this) => T): T
+```
+
+Simply calls the provided function passing `this` as the only argument.
+
+**Example:**
+
+```ts
+import type { Compilable } from 'kysely'
+
+function log<T extends Compilable>(qb: T): T {
+  console.log(qb.compile())
+  return qb
+}
+
+await db.selectFrom('person')
+  .selectAll()
+  .$call(log)
+  .execute()
+```
+
+### $if
+
+```ts
+$if<O2>(
+  condition: boolean,
+  func: (qb: this) => SelectQueryBuilder<any, any, O & O2>
+): SelectQueryBuilder<DB, TB, O & Partial<Omit<O2, keyof O>>>
+```
+
+Call `func(this)` if `condition` is true.
+
+This method is especially handy with optional selects. Selections made inside the callback add optional fields to the result type.
+
+**Example:**
+
+```ts
+async function getPerson(id: number, withLastName: boolean) {
+  return await db
+    .selectFrom('person')
+    .select(['id', 'first_name'])
+    .$if(withLastName, (qb) => qb.select('last_name'))
+    .where('id', '=', id)
+    .executeTakeFirstOrThrow()
+}
+
+// Return type: { id: number, first_name: string, last_name?: string }
+```
+
+### $castTo
+
+```ts
+$castTo<C>(): SelectQueryBuilder<DB, TB, C>
+```
+
+Change the output type of the query.
+
+This method doesn't change the SQL. It simply returns a copy with a new output type.
+
+### $narrowType
+
+```ts
+$narrowType<T>(): SelectQueryBuilder<DB, TB, NarrowPartial<O, T>>
+```
+
+Narrows (parts of) the output type of the query.
+
+### execute
+
+```ts
+async execute(): Promise<SimplifyResult<O>[]>
+```
+
+Executes the query and returns an array of rows.
+
+### executeTakeFirst
+
+```ts
+async executeTakeFirst(): Promise<SimplifySingleResult<O>>
+```
+
+Executes the query and returns the first result or `undefined` if the query returned no result.
+
+### executeTakeFirstOrThrow
+
+```ts
+async executeTakeFirstOrThrow(
+  errorConstructor?: NoResultErrorConstructor | ((node: QueryNode) => Error)
+): Promise<SimplifyResult<O>>
+```
+
+Executes the query and returns the first result or throws if the query returned no result.
+
+By default an instance of `NoResultError` is thrown.
+
+### stream
+
+```ts
+async *stream(chunkSize?: number): AsyncIterableIterator<O>
+```
+
+Streams the query results.
+
+### compile
+
+```ts
+compile(): CompiledQuery<O>
+```
+
+Compiles the query to SQL without executing it.
+
+### explain
+
+```ts
+async explain<ER extends Record<string, any> = Record<string, any>>(
+  format?: ExplainFormat,
+  options?: Expression<any>
+): Promise<ER[]>
+```
+
+Executes an EXPLAIN query for this query.

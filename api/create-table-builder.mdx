@@ -1,0 +1,528 @@
+---
+title: CreateTableBuilder
+description: Builder for creating table definitions in Kysely
+---
+
+The `CreateTableBuilder` class is used to construct `CREATE TABLE` queries. It provides a fluent API for defining columns, constraints, and table properties.
+
+## Type Parameters
+
+- `TB extends string` - The table name
+- `C extends string` - Union of column names that have been added
+
+## Methods
+
+### temporary
+
+Adds the "temporary" modifier to create a temporary table.
+
+```ts
+temporary(): CreateTableBuilder<TB, C>
+```
+
+<ResponseField name="returns" type="CreateTableBuilder<TB, C>">
+  A new builder with the temporary modifier
+</ResponseField>
+
+### onCommit
+
+Adds an "on commit" statement.
+
+This can be used in conjunction with temporary tables on supported databases like PostgreSQL.
+
+```ts
+onCommit(onCommit: OnCommitAction): CreateTableBuilder<TB, C>
+```
+
+<ParamField path="onCommit" type="OnCommitAction" required>
+  The on commit action (e.g., `preserve rows`, `delete rows`, `drop`)
+</ParamField>
+
+<ResponseField name="returns" type="CreateTableBuilder<TB, C>">
+  A new builder with the on commit action
+</ResponseField>
+
+### ifNotExists
+
+Adds the "if not exists" modifier.
+
+If the table already exists, no error is thrown when this method has been called.
+
+```ts
+ifNotExists(): CreateTableBuilder<TB, C>
+```
+
+<ResponseField name="returns" type="CreateTableBuilder<TB, C>">
+  A new builder with the if not exists modifier
+</ResponseField>
+
+### addColumn
+
+Adds a column to the table.
+
+```ts
+addColumn<CN extends string>(
+  columnName: CN,
+  dataType: DataTypeExpression,
+  build?: ColumnBuilderCallback
+): CreateTableBuilder<TB, C | CN>
+```
+
+<ParamField path="columnName" type="string" required>
+  The name of the column
+</ParamField>
+
+<ParamField path="dataType" type="DataTypeExpression" required>
+  The data type of the column (e.g., `integer`, `varchar(50)`, `text`)
+</ParamField>
+
+<ParamField path="build" type="ColumnBuilderCallback">
+  Optional callback to configure the column definition
+</ParamField>
+
+<ResponseField name="returns" type="CreateTableBuilder<TB, C | CN>">
+  A new builder with the column added
+</ResponseField>
+
+#### Examples
+
+```ts
+import { sql } from 'kysely'
+
+await db.schema
+  .createTable('person')
+  .addColumn('id', 'integer', (col) => col.autoIncrement().primaryKey())
+  .addColumn('first_name', 'varchar(50)', (col) => col.notNull())
+  .addColumn('last_name', 'varchar(255)')
+  .addColumn('bank_balance', 'numeric(8, 2)')
+  // You can specify any data type using the `sql` tag if the types
+  // don't include it.
+  .addColumn('data', sql`any_type_here`)
+  .addColumn('parent_id', 'integer', (col) =>
+    col.references('person.id').onDelete('cascade')
+  )
+```
+
+For databases that don't support foreign key constraints in column definitions (like MySQL 5.X):
+
+```ts
+await db.schema
+  .createTable('person')
+  .addColumn('id', 'integer', (col) => col.primaryKey())
+  .addColumn('parent_id', 'integer')
+  .addForeignKeyConstraint(
+    'person_parent_id_fk',
+    ['parent_id'],
+    'person',
+    ['id'],
+    (cb) => cb.onDelete('cascade')
+  )
+  .execute()
+```
+
+PostgreSQL auto-incrementing column:
+
+```ts
+await db.schema
+  .createTable('person')
+  .addColumn('id', 'serial', (col) => col.primaryKey())
+  .execute()
+```
+
+### addPrimaryKeyConstraint
+
+Adds a primary key constraint for one or more columns.
+
+The constraint name can be anything you want, but it must be unique across the whole database.
+
+```ts
+addPrimaryKeyConstraint(
+  constraintName: string,
+  columns: C[],
+  build?: PrimaryKeyConstraintBuilderCallback
+): CreateTableBuilder<TB, C>
+```
+
+<ParamField path="constraintName" type="string" required>
+  The name of the constraint
+</ParamField>
+
+<ParamField path="columns" type="C[]" required>
+  The columns to include in the primary key
+</ParamField>
+
+<ParamField path="build" type="PrimaryKeyConstraintBuilderCallback">
+  Optional callback to configure the constraint
+</ParamField>
+
+<ResponseField name="returns" type="CreateTableBuilder<TB, C>">
+  A new builder with the constraint added
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createTable('person')
+  .addColumn('first_name', 'varchar(64)')
+  .addColumn('last_name', 'varchar(64)')
+  .addPrimaryKeyConstraint('primary_key', ['first_name', 'last_name'])
+  .execute()
+```
+
+### addUniqueConstraint
+
+Adds a unique constraint for one or more columns.
+
+The constraint name can be anything you want, but it must be unique across the whole database.
+
+```ts
+addUniqueConstraint(
+  constraintName: string,
+  columns: C[],
+  build?: UniqueConstraintNodeBuilderCallback
+): CreateTableBuilder<TB, C>
+```
+
+<ParamField path="constraintName" type="string" required>
+  The name of the constraint
+</ParamField>
+
+<ParamField path="columns" type="C[]" required>
+  The columns to include in the unique constraint
+</ParamField>
+
+<ParamField path="build" type="UniqueConstraintNodeBuilderCallback">
+  Optional callback to configure the constraint
+</ParamField>
+
+<ResponseField name="returns" type="CreateTableBuilder<TB, C>">
+  A new builder with the constraint added
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createTable('person')
+  .addColumn('first_name', 'varchar(64)')
+  .addColumn('last_name', 'varchar(64)')
+  .addUniqueConstraint(
+    'first_name_last_name_unique',
+    ['first_name', 'last_name']
+  )
+  .execute()
+```
+
+PostgreSQL with `nulls not distinct`:
+
+```ts
+await db.schema
+  .createTable('person')
+  .addColumn('first_name', 'varchar(64)')
+  .addColumn('last_name', 'varchar(64)')
+  .addUniqueConstraint(
+    'first_name_last_name_unique',
+    ['first_name', 'last_name'],
+    (cb) => cb.nullsNotDistinct()
+  )
+  .execute()
+```
+
+### addCheckConstraint
+
+Adds a check constraint.
+
+The constraint name can be anything you want, but it must be unique across the whole database.
+
+```ts
+addCheckConstraint(
+  constraintName: string,
+  checkExpression: Expression<any>,
+  build?: CheckConstraintBuilderCallback
+): CreateTableBuilder<TB, C>
+```
+
+<ParamField path="constraintName" type="string" required>
+  The name of the constraint
+</ParamField>
+
+<ParamField path="checkExpression" type="Expression<any>" required>
+  The check expression
+</ParamField>
+
+<ParamField path="build" type="CheckConstraintBuilderCallback">
+  Optional callback to configure the constraint
+</ParamField>
+
+<ResponseField name="returns" type="CreateTableBuilder<TB, C>">
+  A new builder with the constraint added
+</ResponseField>
+
+#### Examples
+
+```ts
+import { sql } from 'kysely'
+
+await db.schema
+  .createTable('animal')
+  .addColumn('number_of_legs', 'integer')
+  .addCheckConstraint('check_legs', sql`number_of_legs < 5`)
+  .execute()
+```
+
+### addForeignKeyConstraint
+
+Adds a foreign key constraint.
+
+The constraint name can be anything you want, but it must be unique across the whole database.
+
+```ts
+addForeignKeyConstraint(
+  constraintName: string,
+  columns: C[],
+  targetTable: string,
+  targetColumns: string[],
+  build?: ForeignKeyConstraintBuilderCallback
+): CreateTableBuilder<TB, C>
+```
+
+<ParamField path="constraintName" type="string" required>
+  The name of the constraint
+</ParamField>
+
+<ParamField path="columns" type="C[]" required>
+  The columns in this table
+</ParamField>
+
+<ParamField path="targetTable" type="string" required>
+  The target table name
+</ParamField>
+
+<ParamField path="targetColumns" type="string[]" required>
+  The columns in the target table
+</ParamField>
+
+<ParamField path="build" type="ForeignKeyConstraintBuilderCallback">
+  Optional callback to configure the constraint
+</ParamField>
+
+<ResponseField name="returns" type="CreateTableBuilder<TB, C>">
+  A new builder with the constraint added
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createTable('pet')
+  .addColumn('owner_id', 'integer')
+  .addForeignKeyConstraint(
+    'owner_id_foreign',
+    ['owner_id'],
+    'person',
+    ['id'],
+  )
+  .execute()
+```
+
+Multiple columns:
+
+```ts
+await db.schema
+  .createTable('pet')
+  .addColumn('owner_id1', 'integer')
+  .addColumn('owner_id2', 'integer')
+  .addForeignKeyConstraint(
+    'owner_id_foreign',
+    ['owner_id1', 'owner_id2'],
+    'person',
+    ['id1', 'id2'],
+    (cb) => cb.onDelete('cascade')
+  )
+  .execute()
+```
+
+### modifyFront
+
+Adds any additional SQL to the front of the query after the `create` keyword.
+
+```ts
+modifyFront(modifier: Expression<any>): CreateTableBuilder<TB, C>
+```
+
+<ParamField path="modifier" type="Expression<any>" required>
+  The SQL expression to add
+</ParamField>
+
+<ResponseField name="returns" type="CreateTableBuilder<TB, C>">
+  A new builder with the modifier added
+</ResponseField>
+
+#### Examples
+
+```ts
+import { sql } from 'kysely'
+
+await db.schema
+  .createTable('person')
+  .modifyFront(sql`global temporary`)
+  .addColumn('id', 'integer', col => col.primaryKey())
+  .addColumn('first_name', 'varchar(64)', col => col.notNull())
+  .addColumn('last_name', 'varchar(64)', col => col.notNull())
+  .execute()
+```
+
+Generated SQL (PostgreSQL):
+
+```sql
+create global temporary table "person" (
+  "id" integer primary key,
+  "first_name" varchar(64) not null,
+  "last_name" varchar(64) not null
+)
+```
+
+### modifyEnd
+
+Adds any additional SQL to the end of the query.
+
+```ts
+modifyEnd(modifier: Expression<any>): CreateTableBuilder<TB, C>
+```
+
+<ParamField path="modifier" type="Expression<any>" required>
+  The SQL expression to add
+</ParamField>
+
+<ResponseField name="returns" type="CreateTableBuilder<TB, C>">
+  A new builder with the modifier added
+</ResponseField>
+
+#### Examples
+
+```ts
+import { sql } from 'kysely'
+
+await db.schema
+  .createTable('person')
+  .addColumn('id', 'integer', col => col.primaryKey())
+  .addColumn('first_name', 'varchar(64)', col => col.notNull())
+  .addColumn('last_name', 'varchar(64)', col => col.notNull())
+  .modifyEnd(sql`collate utf8_unicode_ci`)
+  .execute()
+```
+
+Generated SQL (MySQL):
+
+```sql
+create table `person` (
+  `id` integer primary key,
+  `first_name` varchar(64) not null,
+  `last_name` varchar(64) not null
+) collate utf8_unicode_ci
+```
+
+### as
+
+Creates a table from a `SELECT` query.
+
+```ts
+as(expression: Expression<unknown>): CreateTableBuilder<TB, C>
+```
+
+<ParamField path="expression" type="Expression<unknown>" required>
+  The SELECT query expression
+</ParamField>
+
+<ResponseField name="returns" type="CreateTableBuilder<TB, C>">
+  A new builder with the SELECT query
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createTable('copy')
+  .temporary()
+  .as(db.selectFrom('person').select(['first_name', 'last_name']))
+  .execute()
+```
+
+Generated SQL (PostgreSQL):
+
+```sql
+create temporary table "copy" as
+select "first_name", "last_name" from "person"
+```
+
+### $call
+
+Calls the given function passing `this` as the only argument.
+
+```ts
+$call<T>(func: (qb: this) => T): T
+```
+
+<ParamField path="func" type="(qb: this) => T" required>
+  A function that receives the builder and returns a value
+</ParamField>
+
+<ResponseField name="returns" type="T">
+  The return value of the provided function
+</ResponseField>
+
+#### Examples
+
+```ts
+await db.schema
+  .createTable('test')
+  .$call((builder) => builder.addColumn('id', 'integer'))
+  .execute()
+```
+
+Creating reusable functions:
+
+```ts
+import { type CreateTableBuilder, sql } from 'kysely'
+
+const addDefaultColumns = (ctb: CreateTableBuilder<any, any>) => {
+  return ctb
+    .addColumn('id', 'integer', (col) => col.notNull())
+    .addColumn('created_at', 'date', (col) =>
+      col.notNull().defaultTo(sql`now()`)
+    )
+    .addColumn('updated_at', 'date', (col) =>
+      col.notNull().defaultTo(sql`now()`)
+    )
+}
+
+await db.schema
+  .createTable('test')
+  .$call(addDefaultColumns)
+  .execute()
+```
+
+### compile
+
+Compiles the query to a `CompiledQuery` without executing it.
+
+```ts
+compile(): CompiledQuery
+```
+
+<ResponseField name="returns" type="CompiledQuery">
+  The compiled query object containing SQL and parameters
+</ResponseField>
+
+### execute
+
+Executes the query.
+
+```ts
+async execute(): Promise<void>
+```
+
+<ResponseField name="returns" type="Promise<void>">
+  A promise that resolves when the table is created
+</ResponseField>

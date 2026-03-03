@@ -1,0 +1,409 @@
+---
+title: AlterTableBuilder
+description: Builder for altering table definitions in Kysely
+---
+
+The `AlterTableBuilder` class is used to construct `ALTER TABLE` queries. It provides a fluent API for modifying tables, adding or dropping columns, and managing constraints.
+
+## Methods
+
+### renameTo
+
+Renames the table.
+
+```ts
+renameTo(newTableName: string): AlterTableExecutor
+```
+
+<ParamField path="newTableName" type="string" required>
+  The new name for the table
+</ParamField>
+
+<ResponseField name="returns" type="AlterTableExecutor">
+  An executor for the alter table query
+</ResponseField>
+
+### setSchema
+
+Sets the schema for the table.
+
+```ts
+setSchema(newSchema: string): AlterTableExecutor
+```
+
+<ParamField path="newSchema" type="string" required>
+  The new schema for the table
+</ParamField>
+
+<ResponseField name="returns" type="AlterTableExecutor">
+  An executor for the alter table query
+</ResponseField>
+
+### alterColumn
+
+Alters a column in the table.
+
+```ts
+alterColumn(
+  column: string,
+  alteration: AlterColumnBuilderCallback
+): AlterTableColumnAlteringBuilder
+```
+
+<ParamField path="column" type="string" required>
+  The name of the column to alter
+</ParamField>
+
+<ParamField path="alteration" type="AlterColumnBuilderCallback" required>
+  A callback that receives an AlterColumnBuilder and returns modifications
+</ParamField>
+
+<ResponseField name="returns" type="AlterTableColumnAlteringBuilder">
+  A builder for additional column alterations
+</ResponseField>
+
+### dropColumn
+
+Drops a column from the table.
+
+```ts
+dropColumn(column: string): AlterTableColumnAlteringBuilder
+```
+
+<ParamField path="column" type="string" required>
+  The name of the column to drop
+</ParamField>
+
+<ResponseField name="returns" type="AlterTableColumnAlteringBuilder">
+  A builder for additional column alterations
+</ResponseField>
+
+### renameColumn
+
+Renames a column.
+
+```ts
+renameColumn(
+  column: string,
+  newColumn: string
+): AlterTableColumnAlteringBuilder
+```
+
+<ParamField path="column" type="string" required>
+  The current name of the column
+</ParamField>
+
+<ParamField path="newColumn" type="string" required>
+  The new name for the column
+</ParamField>
+
+<ResponseField name="returns" type="AlterTableColumnAlteringBuilder">
+  A builder for additional column alterations
+</ResponseField>
+
+### addColumn
+
+Adds a new column to the table.
+
+```ts
+addColumn(
+  columnName: string,
+  dataType: DataTypeExpression,
+  build?: ColumnDefinitionBuilderCallback
+): AlterTableColumnAlteringBuilder
+```
+
+<ParamField path="columnName" type="string" required>
+  The name of the column to add
+</ParamField>
+
+<ParamField path="dataType" type="DataTypeExpression" required>
+  The data type of the column
+</ParamField>
+
+<ParamField path="build" type="ColumnDefinitionBuilderCallback">
+  Optional callback to configure the column definition
+</ParamField>
+
+<ResponseField name="returns" type="AlterTableColumnAlteringBuilder">
+  A builder for additional column alterations
+</ResponseField>
+
+### modifyColumn
+
+Creates an `ALTER TABLE MODIFY COLUMN` query.
+
+The `MODIFY COLUMN` statement is only implemented by MySQL and Oracle. On other databases you should use the `alterColumn` method.
+
+```ts
+modifyColumn(
+  columnName: string,
+  dataType: DataTypeExpression,
+  build?: ColumnDefinitionBuilderCallback
+): AlterTableColumnAlteringBuilder
+```
+
+<ParamField path="columnName" type="string" required>
+  The name of the column to modify
+</ParamField>
+
+<ParamField path="dataType" type="DataTypeExpression" required>
+  The new data type for the column
+</ParamField>
+
+<ParamField path="build" type="ColumnDefinitionBuilderCallback">
+  Optional callback to configure the column definition
+</ParamField>
+
+<ResponseField name="returns" type="AlterTableColumnAlteringBuilder">
+  A builder for additional column alterations
+</ResponseField>
+
+### addUniqueConstraint
+
+Adds a unique constraint for one or more columns.
+
+See [CreateTableBuilder.addUniqueConstraint](/api/create-table-builder#adduniqueconstraint) for more details.
+
+```ts
+addUniqueConstraint(
+  constraintName: string,
+  columns: string[],
+  build?: UniqueConstraintNodeBuilderCallback
+): AlterTableExecutor
+```
+
+<ParamField path="constraintName" type="string" required>
+  The name of the constraint
+</ParamField>
+
+<ParamField path="columns" type="string[]" required>
+  The columns to include in the unique constraint
+</ParamField>
+
+<ParamField path="build" type="UniqueConstraintNodeBuilderCallback">
+  Optional callback to configure the constraint
+</ParamField>
+
+<ResponseField name="returns" type="AlterTableExecutor">
+  An executor for the alter table query
+</ResponseField>
+
+### addCheckConstraint
+
+Adds a check constraint.
+
+See [CreateTableBuilder.addCheckConstraint](/api/create-table-builder#addcheckconstraint) for more details.
+
+```ts
+addCheckConstraint(
+  constraintName: string,
+  checkExpression: Expression<any>,
+  build?: CheckConstraintBuilderCallback
+): AlterTableExecutor
+```
+
+<ParamField path="constraintName" type="string" required>
+  The name of the constraint
+</ParamField>
+
+<ParamField path="checkExpression" type="Expression<any>" required>
+  The check expression
+</ParamField>
+
+<ParamField path="build" type="CheckConstraintBuilderCallback">
+  Optional callback to configure the constraint
+</ParamField>
+
+<ResponseField name="returns" type="AlterTableExecutor">
+  An executor for the alter table query
+</ResponseField>
+
+### addForeignKeyConstraint
+
+Adds a foreign key constraint.
+
+Unlike [CreateTableBuilder.addForeignKeyConstraint](/api/create-table-builder#addforeignkeyconstraint), this method returns the constraint builder and doesn't take a callback as the last argument. This is because you can only add one column per `ALTER TABLE` query.
+
+```ts
+addForeignKeyConstraint(
+  constraintName: string,
+  columns: string[],
+  targetTable: string,
+  targetColumns: string[],
+  build?: ForeignKeyConstraintBuilderCallback
+): AlterTableAddForeignKeyConstraintBuilder
+```
+
+<ParamField path="constraintName" type="string" required>
+  The name of the constraint
+</ParamField>
+
+<ParamField path="columns" type="string[]" required>
+  The columns in this table
+</ParamField>
+
+<ParamField path="targetTable" type="string" required>
+  The target table name
+</ParamField>
+
+<ParamField path="targetColumns" type="string[]" required>
+  The columns in the target table
+</ParamField>
+
+<ParamField path="build" type="ForeignKeyConstraintBuilderCallback">
+  Optional callback to configure the constraint
+</ParamField>
+
+<ResponseField name="returns" type="AlterTableAddForeignKeyConstraintBuilder">
+  A builder for the foreign key constraint
+</ResponseField>
+
+### addPrimaryKeyConstraint
+
+Adds a primary key constraint for one or more columns.
+
+See [CreateTableBuilder.addPrimaryKeyConstraint](/api/create-table-builder#addprimarykeyconstraint) for more details.
+
+```ts
+addPrimaryKeyConstraint(
+  constraintName: string,
+  columns: string[],
+  build?: PrimaryKeyConstraintBuilderCallback
+): AlterTableExecutor
+```
+
+<ParamField path="constraintName" type="string" required>
+  The name of the constraint
+</ParamField>
+
+<ParamField path="columns" type="string[]" required>
+  The columns to include in the primary key
+</ParamField>
+
+<ParamField path="build" type="PrimaryKeyConstraintBuilderCallback">
+  Optional callback to configure the constraint
+</ParamField>
+
+<ResponseField name="returns" type="AlterTableExecutor">
+  An executor for the alter table query
+</ResponseField>
+
+### dropConstraint
+
+Drops a constraint from the table.
+
+```ts
+dropConstraint(constraintName: string): AlterTableDropConstraintBuilder
+```
+
+<ParamField path="constraintName" type="string" required>
+  The name of the constraint to drop
+</ParamField>
+
+<ResponseField name="returns" type="AlterTableDropConstraintBuilder">
+  A builder for dropping constraints
+</ResponseField>
+
+### renameConstraint
+
+Renames a constraint.
+
+```ts
+renameConstraint(
+  oldName: string,
+  newName: string
+): AlterTableDropConstraintBuilder
+```
+
+<ParamField path="oldName" type="string" required>
+  The current name of the constraint
+</ParamField>
+
+<ParamField path="newName" type="string" required>
+  The new name for the constraint
+</ParamField>
+
+<ResponseField name="returns" type="AlterTableDropConstraintBuilder">
+  A builder for the constraint operation
+</ResponseField>
+
+### addIndex
+
+Adds an index to the table.
+
+```ts
+addIndex(indexName: string): AlterTableAddIndexBuilder
+```
+
+<ParamField path="indexName" type="string" required>
+  The name of the index to add
+</ParamField>
+
+<ResponseField name="returns" type="AlterTableAddIndexBuilder">
+  A builder for creating the index
+</ResponseField>
+
+#### Examples
+
+```ts
+db.schema.alterTable('person')
+  .addIndex('person_email_index')
+  .column('email')
+  .unique()
+  .execute()
+```
+
+Generated SQL (MySQL):
+
+```sql
+alter table `person` add unique index `person_email_index` (`email`)
+```
+
+### dropIndex
+
+Drops an index from the table.
+
+```ts
+dropIndex(indexName: string): AlterTableExecutor
+```
+
+<ParamField path="indexName" type="string" required>
+  The name of the index to drop
+</ParamField>
+
+<ResponseField name="returns" type="AlterTableExecutor">
+  An executor for the alter table query
+</ResponseField>
+
+#### Examples
+
+```ts
+db.schema.alterTable('person')
+  .dropIndex('person_email_index')
+  .execute()
+```
+
+Generated SQL (MySQL):
+
+```sql
+alter table `person` drop index `test_first_name_index`
+```
+
+### $call
+
+Calls the given function passing `this` as the only argument.
+
+See [CreateTableBuilder.$call](/api/create-table-builder#call) for more details.
+
+```ts
+$call<T>(func: (qb: this) => T): T
+```
+
+<ParamField path="func" type="(qb: this) => T" required>
+  A function that receives the builder and returns a value
+</ParamField>
+
+<ResponseField name="returns" type="T">
+  The return value of the provided function
+</ResponseField>

@@ -1,0 +1,331 @@
+---
+title: "Understanding Expressions"
+description: "Learn how to use Expression<T> and ExpressionBuilder to create complex, type-safe queries"
+---
+
+An [`Expression<T>`](https://kysely-org.github.io/kysely-apidoc/interfaces/Expression.html) is the basic type-safe query building block in Kysely. Pretty much all methods accept expressions as inputs.
+
+## What is an Expression?
+
+`Expression<T>` represents an arbitrary SQL expression, like:
+- A binary expression (e.g., `a + b`)
+- A function call (e.g., `concat(arg1, ' ', arg2, ...)`)
+- Any combination of these, no matter how complex
+
+`T` is the output type of the expression.
+
+<Info>
+Most internal classes like `SelectQueryBuilder` and `RawBuilder` (the return value of the `sql` tag) are expressions themselves.
+</Info>
+
+## Expression Builder
+
+Expressions are usually built using an instance of [`ExpressionBuilder<DB, TB>`](https://kysely-org.github.io/kysely-apidoc/interfaces/ExpressionBuilder.html):
+
+- `DB` is the same database type you give to `Kysely`
+- `TB` is the union of all table names visible in the context
+
+For example, `ExpressionBuilder<DB, 'person' | 'pet'>` means you can reference `person` and `pet` columns.
+
+### Getting an expression builder
+
+You can get an instance using a callback:
+
+```ts
+const person = await db
+  .selectFrom('person')
+  // `eb` is ExpressionBuilder<DB, 'person'>
+  .select((eb) => [
+    // Call functions
+    eb.fn('upper', ['first_name']).as('upper_first_name'),
+    
+    // Select a subquery
+    eb.selectFrom('pet')
+      .select('name')
+      .whereRef('pet.owner_id', '=', 'person.id')
+      .limit(1)
+      .as('pet_name'),
+    
+    // Boolean expression
+    eb('first_name', '=', 'Jennifer').as('is_jennifer'),
+    
+    // Static value
+    eb.val('Some value').as('string_value'),
+    
+    // Literal value
+    eb.lit(42).as('literal_value'),
+  ])
+  .where(({ and, or, eb, not, exists, selectFrom }) => or([
+    and([
+      eb('first_name', '=', firstName),
+      eb('last_name', '=', lastName)
+    ]),
+    not(exists(
+      selectFrom('pet')
+        .select('pet.id')
+        .whereRef('pet.owner_id', '=', 'person.id')
+        .where('pet.species', 'in', ['dog', 'cat'])
+    ))
+  ]))
+  .executeTakeFirstOrThrow()
+
+console.log(person.upper_first_name)
+console.log(person.pet_name)
+console.log(person.is_jennifer)
+```
+
+This generates:
+
+```sql
+select
+  upper("first_name") as "upper_first_name",
+  
+  (
+    select "name"
+    from "pet"
+    where "pet"."owner_id" = "person"."id"
+    limit 1
+  ) as "pet_name",
+  
+  "first_name" = $1 as "is_jennifer",
+  $2 as "string_value",
+  42 as "literal_value"
+from
+  "person"
+where (
+  (
+    "first_name" = $3
+    and "last_name" = $4
+  )
+  or not exists (
+    select "pet.id"
+    from "pet"
+    where "pet"."owner_id" = "person"."id"
+    and "pet"."species" in ($5, $6)
+  )
+)
+```
+
+### Why use callbacks?
+
+You might wonder: "Why use a callback to get the expression builder? Why not a global function?"
+
+<Tip>
+Callbacks allow Kysely to infer the context correctly. The expression builder's methods only auto-complete and accept column and table names that are available in the context. This provides more type-safety!
+</Tip>
+
+## Using expressionBuilder globally
+
+There's also a global `expressionBuilder` function:
+
+```ts
+import { expressionBuilder } from 'kysely'
+
+// No tables in context - use this in helper functions
+const eb1 = expressionBuilder<DB>()
+
+// Can reference 'person' columns
+const eb2 = expressionBuilder<DB, 'person'>()
+
+// Can reference 'person' and 'pet' columns
+const eb3 = expressionBuilder<DB, 'person' | 'pet'>()
+
+// Infer context from a query builder
+let qb = query
+  .selectFrom('person')
+  .innerJoin('movie as m', 'm.director_id', 'person.id')
+
+// Type: ExpressionBuilder<DB & { m: Movie }, 'person' | 'm'>
+const eb = expressionBuilder(qb)
+
+qb = qb.where(eb.not(eb.exists(
+  eb.selectFrom('pet')
+    .select('pet.id')
+    .whereRef('pet.name', '=', 'm.name')
+)))
+```
+
+## Composability
+
+All expressions are composable:
+
+<CardGroup cols={2}>
+
+<Card title="Pass expressions as arguments" icon="arrows-turn-right">
+You can pass expressions as arguments to other expressions
+</Card>
+
+<Card title="Use anywhere" icon="globe">
+All query builder methods accept expressions and callbacks
+</Card>
+
+<Card title="Type-safe" icon="shield-check">
+All methods offer auto-completions and type checking
+</Card>
+
+<Card title="No runtime cost" icon="gauge-high">
+Expressions compile to efficient SQL
+</Card>
+
+</CardGroup>
+
+## Creating reusable helpers
+
+The expression builder is perfect for creating reusable helpers. Here's a basic example:
+
+```ts
+function hasDogNamed(name: string): Expression<boolean> {
+  const eb = expressionBuilder<DB, 'person'>()
+  
+  return eb.exists(
+    eb.selectFrom('pet')
+      .select('pet.id')
+      .whereRef('pet.owner_id', '=', 'person.id')
+      .where('pet.species', '=', 'dog')
+      .where('pet.name', '=', name)
+  )
+}
+
+const doggoPersons = await db
+  .selectFrom('person')
+  .selectAll('person')
+  .where(hasDogNamed('Doggo'))
+  .execute()
+```
+
+<Warning>
+The above helper is not very type-safe. The following would compile but fail at runtime:
+
+```ts
+const bigFatFailure = await db
+  .selectFrom('movie') // person table is not in context!
+  .selectAll('movie')
+  .where(hasDogNamed('Doggo')) // but we're referring to person.id
+  .execute()
+```
+</Warning>
+
+### Type-safe helpers
+
+It's better to not make assumptions about the calling context:
+
+```ts
+function hasDogNamed(name: Expression<string>, ownerId: Expression<number>) {
+  // No tables in context - no assumptions about caller
+  const eb = expressionBuilder<DB>()
+  
+  return eb.exists(
+    eb.selectFrom('pet')
+      .select('pet.id')
+      .where('pet.owner_id', '=', ownerId)
+      .where('pet.species', '=', 'dog')
+      .where('pet.name', '=', name)
+  )
+}
+
+const doggoPersons = await db
+  .selectFrom('person')
+  .selectAll('person')
+  .where((eb) => hasDogNamed(eb.val('Doggo'), eb.ref('person.id')))
+  .execute()
+```
+
+<Tip>
+Learn more in the [reusable helpers recipe](/recipes/reusable-helpers).
+</Tip>
+
+## Conditional expressions
+
+<Note>
+This section covers conditional `where` expressions. For conditional selections in `select` clauses, see the [conditional selects recipe](/recipes/conditional-selects).
+</Note>
+
+### Basic conditional filters
+
+For optional filters combined with `and`, use additive `where` calls:
+
+```ts
+let query = db
+  .selectFrom('person')
+  .selectAll('person')
+
+if (firstName) {
+  // Query builder is immutable - replace with new instance
+  query = query.where('first_name', '=', firstName)
+}
+
+if (lastName) {
+  query = query.where('last_name', '=', lastName)
+}
+
+const persons = await query.execute()
+```
+
+### Using expression builder
+
+The same query using the expression builder:
+
+```ts
+const persons = await db
+  .selectFrom('person')
+  .selectAll('person')
+  .where((eb) => {
+    const filters: Expression<SqlBool>[] = []
+    
+    if (firstName) {
+      filters.push(eb('first_name', '=', firstName))
+    }
+    
+    if (lastName) {
+      filters.push(eb('last_name', '=', lastName))
+    }
+    
+    return eb.and(filters)
+  })
+  .execute()
+```
+
+<Tip>
+Using this pattern, you can build conditional expressions of any complexity.
+</Tip>
+
+## Common expression builder methods
+
+| Method | Description | Example |
+|--------|-------------|----------|
+| `eb(left, op, right)` | Binary expression | `eb('age', '>', 18)` |
+| `eb.fn(name, args)` | Function call | `eb.fn('upper', ['name'])` |
+| `eb.val(value)` | Value expression | `eb.val('hello')` |
+| `eb.lit(value)` | Literal value | `eb.lit(42)` |
+| `eb.ref(column)` | Column reference | `eb.ref('person.id')` |
+| `eb.and(exprs)` | AND expression | `eb.and([expr1, expr2])` |
+| `eb.or(exprs)` | OR expression | `eb.or([expr1, expr2])` |
+| `eb.not(expr)` | NOT expression | `eb.not(expr)` |
+| `eb.exists(subquery)` | EXISTS check | `eb.exists(subquery)` |
+| `eb.selectFrom(table)` | Start subquery | `eb.selectFrom('pet')` |
+
+## Where to use expressions
+
+Expressions work in all parts of a query:
+
+<Steps>
+<Step title="select">
+Build complex selections with functions and subqueries
+</Step>
+
+<Step title="where / having">
+Create complex filter conditions
+</Step>
+
+<Step title="on">
+Use in join conditions
+</Step>
+
+<Step title="orderBy / groupBy">
+Sort and group by expressions
+</Step>
+
+<Step title="set / values">
+Use in updates and inserts
+</Step>
+</Steps>

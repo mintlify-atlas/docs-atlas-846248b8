@@ -1,0 +1,389 @@
+---
+title: Type Safety
+description: Understand how Kysely leverages TypeScript's type system to provide compile-time safety for SQL queries
+---
+
+Kysely's primary goal is to provide end-to-end type safety for SQL queries. Every column reference, table name, and return type is validated at compile time.
+
+## Database Type Parameter
+
+Type safety starts with the database type parameter passed to `Kysely<DB>`:
+
+```typescript
+import { Kysely, Generated } from 'kysely'
+
+interface Database {
+  person: {
+    id: Generated<number>
+    first_name: string
+    last_name: string | null
+    age: number
+  }
+  pet: {
+    id: Generated<number>
+    name: string
+    owner_id: number
+    species: string
+  }
+}
+
+const db = new Kysely<Database>({
+  dialect: /* ... */
+})
+```
+
+This single type parameter powers all type inference throughout Kysely.
+
+## Column Selection Type Inference
+
+Kysely infers the return type based on selected columns:
+
+```typescript
+// Type: { first_name: string; age: number }[]
+const result = await db
+  .selectFrom('person')
+  .select(['first_name', 'age'])
+  .execute()
+
+result[0].first_name // ✓ string
+result[0].age // ✓ number
+result[0].last_name // ✗ Error: Property 'last_name' does not exist
+```
+
+### Aliased Columns
+
+```typescript
+// Type: { firstName: string; personAge: number }[]
+const result = await db
+  .selectFrom('person')
+  .select([
+    'first_name as firstName',
+    'age as personAge'
+  ])
+  .execute()
+
+result[0].firstName // ✓ string
+result[0].personAge // ✓ number
+result[0].first_name // ✗ Error: Property 'first_name' does not exist
+```
+
+### SelectAll
+
+```typescript
+// Type: { id: number; first_name: string; last_name: string | null; age: number }[]
+const result = await db
+  .selectFrom('person')
+  .selectAll()
+  .execute()
+```
+
+## Table Reference Validation
+
+Only tables defined in the database interface can be referenced:
+
+```typescript
+// ✓ Valid
+await db.selectFrom('person').selectAll().execute()
+
+// ✗ Error: Argument of type '"invalid_table"' is not assignable
+await db.selectFrom('invalid_table').selectAll().execute()
+```
+
+## Column Reference Validation
+
+Columns must exist in the selected table(s):
+
+```typescript
+// ✓ Valid
+await db
+  .selectFrom('person')
+  .select(['first_name', 'age'])
+  .execute()
+
+// ✗ Error: Type '"invalid_column"' is not assignable
+await db
+  .selectFrom('person')
+  .select(['first_name', 'invalid_column'])
+  .execute()
+```
+
+## JOIN Type Safety
+
+After a join, columns from both tables are available:
+
+```typescript
+const result = await db
+  .selectFrom('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  .select([
+    'person.first_name', // ✓ Available
+    'pet.name',          // ✓ Available
+    'person.age',        // ✓ Available
+    'pet.species'        // ✓ Available
+  ])
+  .execute()
+
+// Type: { first_name: string; name: string; age: number; species: string }[]
+```
+
+### Join Reference Validation
+
+```typescript
+// ✓ Valid - columns exist in both tables
+await db
+  .selectFrom('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  .selectAll()
+  .execute()
+
+// ✗ Error - invalid column reference
+await db
+  .selectFrom('person')
+  .innerJoin('pet', 'pet.invalid_column', 'person.id')
+  .selectAll()
+  .execute()
+```
+
+## WHERE Clause Type Safety
+
+WHERE clauses are validated against available columns and their types:
+
+```typescript
+// ✓ Valid - comparing number to number
+await db
+  .selectFrom('person')
+  .where('age', '>', 18)
+  .selectAll()
+  .execute()
+
+// ✓ Valid - comparing string to string
+await db
+  .selectFrom('person')
+  .where('first_name', '=', 'Jennifer')
+  .selectAll()
+  .execute()
+
+// ✗ Error - comparing number to string
+await db
+  .selectFrom('person')
+  .where('age', '=', 'invalid') // Type error
+  .selectAll()
+  .execute()
+```
+
+## INSERT Type Safety
+
+Inserted values must match the table's `Insertable` type:
+
+```typescript
+interface PersonTable {
+  id: Generated<number>  // Optional in insert
+  first_name: string     // Required
+  last_name: string | null  // Can be null
+  age: number            // Required
+}
+
+// ✓ Valid
+await db.insertInto('person').values({
+  first_name: 'Jennifer',
+  last_name: 'Aniston',
+  age: 40
+}).execute()
+
+// ✓ Valid - id is optional (Generated)
+await db.insertInto('person').values({
+  first_name: 'Arnold',
+  last_name: null,
+  age: 70
+}).execute()
+
+// ✗ Error - missing required field 'first_name'
+await db.insertInto('person').values({
+  last_name: 'Aniston',
+  age: 40
+}).execute()
+
+// ✗ Error - wrong type for 'age'
+await db.insertInto('person').values({
+  first_name: 'Jennifer',
+  last_name: 'Aniston',
+  age: 'forty' // Type error
+}).execute()
+```
+
+## UPDATE Type Safety
+
+Updated values must match the table's `Updateable` type:
+
+```typescript
+interface PersonTable {
+  id: Generated<number>
+  first_name: string
+  last_name: string | null
+  created_at: ColumnType<Date, Date, never> // Cannot be updated
+}
+
+// ✓ Valid
+await db.updateTable('person')
+  .set({ age: 41 })
+  .where('id', '=', 1)
+  .execute()
+
+// ✓ Valid - all fields are optional in updates
+await db.updateTable('person')
+  .set({ first_name: 'Jenny' })
+  .where('id', '=', 1)
+  .execute()
+
+// ✗ Error - created_at cannot be updated (type is 'never')
+await db.updateTable('person')
+  .set({ created_at: new Date() })
+  .where('id', '=', 1)
+  .execute()
+```
+
+## Return Type Inference
+
+Return types change based on execution method:
+
+```typescript
+interface Person {
+  id: number
+  first_name: string
+  last_name: string | null
+  age: number
+}
+
+// Type: Person[]
+const all = await db
+  .selectFrom('person')
+  .selectAll()
+  .execute()
+
+// Type: Person | undefined
+const first = await db
+  .selectFrom('person')
+  .selectAll()
+  .executeTakeFirst()
+
+// Type: Person (or throws)
+const firstOrThrow = await db
+  .selectFrom('person')
+  .selectAll()
+  .executeTakeFirstOrThrow()
+
+if (first) {
+  first.first_name // ✓ Type narrowing works
+}
+```
+
+## Expression Builder Type Safety
+
+The expression builder provides type-safe access to columns in callbacks:
+
+```typescript
+await db
+  .selectFrom('person')
+  .select((eb) => [
+    'id',
+    'first_name',
+    eb.fn.count('id').as('person_count')
+  ])
+  .where((eb) => eb.or([
+    eb('age', '<', 18),
+    eb('age', '>', 65)
+  ]))
+  .execute()
+```
+
+The `eb` parameter knows which columns are available in the current context:
+
+```typescript
+await db
+  .selectFrom('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  .where((eb) => eb.or([
+    eb('person.age', '>', 50),  // ✓ Valid
+    eb('pet.species', '=', 'dog') // ✓ Valid
+  ]))
+  .selectAll()
+  .execute()
+```
+
+## Type Narrowing with Generics
+
+Kysely's query builders are generic, allowing for composable, type-safe functions:
+
+```typescript
+function withMinAge<DB, TB extends keyof DB, O>(
+  qb: SelectQueryBuilder<DB, TB, O>,
+  minAge: number
+) {
+  return qb.where('age', '>=', minAge)
+}
+
+const adults = await withMinAge(
+  db.selectFrom('person').selectAll(),
+  18
+).execute()
+```
+
+## Dynamic Table Access
+
+For runtime-dynamic table access, use `db.dynamic.ref()`:
+
+```typescript
+const tableName = 'person' as string // Runtime value
+const columnName = 'first_name' as string
+
+await db
+  .selectFrom(db.dynamic.ref(tableName))
+  .select([db.dynamic.ref(columnName)])
+  .execute()
+
+// Note: This bypasses type checking!
+```
+
+<Warning>
+  Using `db.dynamic` bypasses Kysely's type safety. Only use it when absolutely necessary.
+</Warning>
+
+## Compile-Time vs Runtime
+
+Kysely provides compile-time type safety. Type information is erased at runtime:
+
+```typescript
+// TypeScript compilation:
+// ✓ Type checks pass, everything is valid
+
+const query = db
+  .selectFrom('person')
+  .select(['first_name', 'age'])
+  .where('age', '>', 18)
+
+// Runtime execution:
+// If 'person' table doesn't exist, you'll get a runtime SQL error
+// Kysely cannot validate your database schema at runtime
+```
+
+<Tip>
+  Use database migration tools and testing to ensure your TypeScript types match your actual database schema.
+</Tip>
+
+## Best Practices
+
+<Tip>
+  Keep your database interface in sync with your actual database schema using migrations or code generation tools.
+</Tip>
+
+<Tip>
+  Use `Selectable`, `Insertable`, and `Updateable` type helpers to extract operation-specific types from your table interfaces.
+</Tip>
+
+<Warning>
+  Avoid using `any` or type assertions. If you need dynamic queries, use `db.dynamic` sparingly and document why it's necessary.
+</Warning>
+
+<Note>
+  Kysely's type safety is structural, not nominal. Two tables with identical column types are considered compatible.
+</Note>

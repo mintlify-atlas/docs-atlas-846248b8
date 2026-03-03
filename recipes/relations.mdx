@@ -1,0 +1,224 @@
+---
+title: "Modeling and Querying Relations"
+description: "Learn how to nest related rows in Kysely queries using JSON functions"
+---
+
+<Warning>
+Kysely is NOT an ORM. Kysely DOES NOT have the concept of relations.
+Kysely IS a query builder. Kysely DOES build the SQL you tell it to, nothing more, nothing less.
+</Warning>
+
+Having said that, there are ways to nest related rows in your queries. You just have to do it using the tools SQL and the underlying dialect (e.g. PostgreSQL, MySQL, or SQLite) provide.
+
+## Prerequisites
+
+This recipe is supported on:
+- PostgreSQL (all versions)
+- MySQL versions 8.0.14 and higher
+- SQLite (with ParseJSONResultsPlugin)
+
+<Note>
+MySQL 8.0.14+ is required due to the way subqueries use outer references in this recipe. See the [MySQL 8.0.14 changelog](https://dev.mysql.com/doc/relnotes/mysql/8.0/en/news-8-0-14.html#mysqld-8-0-14-optimizer) for details.
+</Note>
+
+## JSON data types and functions
+
+PostgreSQL and MySQL have rich JSON support through their `json` data types and functions. The `pg` and `mysql2` node drivers automatically parse returned `json` columns as JavaScript objects.
+
+### Parsing JSON in SQLite
+
+The built-in `SqliteDialect` and some third-party dialects don't parse returned JSON columns to objects automatically. If your JSON columns get returned as strings, use the `ParseJSONResultsPlugin`:
+
+```ts
+const db = new Kysely<DB>({
+  // ...
+  plugins: [new ParseJSONResultsPlugin()]
+})
+```
+
+## Basic example
+
+Let's fetch a list of people and nest each person's pets and mother into the returned objects.
+
+Here's the raw PostgreSQL SQL we want to generate:
+
+```sql
+SELECT
+  person.*,
+  
+  -- Select person's pets as a json array
+  (
+    SELECT
+      COALESCE(JSON_AGG(pets), '[]')
+    FROM
+    (
+      SELECT
+        pet.id, pet.name
+      FROM
+        pet
+      WHERE
+        pet.owner_id = person.id
+      ORDER BY
+        pet.name
+    ) pets
+  ) pets,
+  
+  -- Select person's mother as a json object
+  (
+    SELECT
+      TO_JSON(mother)
+    FROM
+    (
+      SELECT
+        mother.id, mother.first_name
+      FROM
+        person as mother
+      WHERE
+        mother.id = person.mother_id
+    ) mother
+  ) mother
+FROM
+  person
+```
+
+## Using helper functions
+
+Kysely provides helper functions to simplify this pattern:
+
+```ts
+function jsonArrayFrom<O>(expr: Expression<O>) {
+  return sql<Simplify<O>[]>`(select coalesce(json_agg(agg), '[]') from ${expr} as agg)`
+}
+
+function jsonObjectFrom<O>(expr: Expression<O>) {
+  return sql<Simplify<O>>`(select to_json(obj) from ${expr} as obj)`
+}
+```
+
+### Import built-in helpers
+
+These helpers are included in Kysely. Import them based on your dialect:
+
+<CodeGroup>
+
+```ts PostgreSQL
+import { jsonArrayFrom, jsonObjectFrom } from 'kysely/helpers/postgres'
+```
+
+```ts MySQL
+import { jsonArrayFrom, jsonObjectFrom } from 'kysely/helpers/mysql'
+```
+
+```ts SQLite
+import { jsonArrayFrom, jsonObjectFrom } from 'kysely/helpers/sqlite'
+```
+
+</CodeGroup>
+
+## Type-safe queries with helpers
+
+With these helpers, our query becomes much more readable:
+
+```ts
+const persons = await db
+  .selectFrom('person')
+  .selectAll('person')
+  .select((eb) => [
+    // pets
+    jsonArrayFrom(
+      eb.selectFrom('pet')
+        .select(['pet.id', 'pet.name'])
+        .whereRef('pet.owner_id', '=', 'person.id')
+        .orderBy('pet.name')
+    ).as('pets'),
+    
+    // mother
+    jsonObjectFrom(
+      eb.selectFrom('person as mother')
+        .select(['mother.id', 'mother.first_name'])
+        .whereRef('mother.id', '=', 'person.mother_id')
+    ).as('mother')
+  ])
+  .execute()
+
+console.log(persons[0].pets[0].name)
+console.log(persons[0].mother?.first_name)
+```
+
+## Creating reusable relation helpers
+
+For repeated use across your codebase, create dedicated helper functions:
+
+```ts
+function pets(ownerId: Expression<string>) {
+  return jsonArrayFrom(
+    db.selectFrom('pet')
+      .select(['pet.id', 'pet.name'])
+      .where('pet.owner_id', '=', ownerId)
+      .orderBy('pet.name')
+  )
+}
+
+function mother(motherId: Expression<string>) {
+  return jsonObjectFrom(
+    db.selectFrom('person as mother')
+      .select(['mother.id', 'mother.first_name'])
+      .where('mother.id', '=', motherId)
+  )
+}
+```
+
+Now your queries become even cleaner:
+
+```ts
+const persons = await db
+  .selectFrom('person')
+  .selectAll('person')
+  .select(({ ref }) => [
+    pets(ref('person.id')).as('pets'),
+    mother(ref('person.mother_id')).as('mother')
+  ])
+  .execute()
+
+console.log(persons[0].pets[0].name)
+console.log(persons[0].mother?.first_name)
+```
+
+## Handling nullability
+
+Kysely marks selections as nullable if it can't determine that the related object always exists. Use `$notNull()` when you know a relation exists:
+
+```ts
+const persons = await db
+  .selectFrom('person')
+  .selectAll('person')
+  .select(({ ref }) => [
+    pets(ref('person.id')).as('pets'),
+    mother(ref('person.mother_id')).$notNull().as('mother')
+  ])
+  .execute()
+
+console.log(persons[0].pets[0].name)
+console.log(persons[0].mother.first_name) // No optional chaining needed
+```
+
+## Conditional relations
+
+Use `$if` to select relations conditionally:
+
+```ts
+const persons = await db
+  .selectFrom('person')
+  .selectAll('person')
+  .$if(includePets, (qb) => qb.select(
+    (eb) => pets(eb.ref('person.id')).as('pets')
+  ))
+  .$if(includeMom, (qb) => qb.select(
+    (eb) => mother(eb.ref('person.mother_id')).as('mother')
+  ))
+  .execute()
+```
+
+<Tip>
+For better performance, make sure you have indices on foreign key columns like `pet.owner_id` and `person.mother_id`.
+</Tip>

@@ -1,0 +1,255 @@
+---
+title: Database Types
+description: Learn how to define type-safe database interfaces in Kysely using ColumnType, Generated, and other type utilities
+---
+
+Kysely's type system is built around defining a database interface that represents your database schema. This interface provides compile-time type safety for all your queries.
+
+## Basic Database Interface
+
+A database interface is a TypeScript type where each key represents a table name and each value is an interface describing that table's columns:
+
+```typescript
+interface Database {
+  person: {
+    id: number
+    first_name: string
+    last_name: string | null
+    created_at: Date
+  }
+  pet: {
+    id: number
+    name: string
+    owner_id: number
+    species: string
+  }
+}
+```
+
+## ColumnType\<SelectType, InsertType, UpdateType\>
+
+The `ColumnType` type allows you to specify different types for select, insert, and update operations on a single column.
+
+```typescript
+type ColumnType<
+  SelectType,
+  InsertType = SelectType,
+  UpdateType = SelectType,
+> = {
+  readonly __select__: SelectType
+  readonly __insert__: InsertType
+  readonly __update__: UpdateType
+}
+```
+
+### Examples
+
+**Read-only column** (like database-generated timestamps):
+
+```typescript
+interface PersonTable {
+  id: Generated<number>
+  name: string
+  modified_at: ColumnType<Date, string, never>
+}
+
+// SELECT: returns Date
+// INSERT: accepts string
+// UPDATE: cannot be updated (never)
+```
+
+**Unupdateable column**:
+
+```typescript
+type UnupdateableDate = ColumnType<Date, string, never>
+```
+
+## Generated\<T\>
+
+A shortcut for database-generated columns that are optional in inserts and updates:
+
+```typescript
+type Generated<S> = ColumnType<S, S | undefined, S>
+```
+
+### Usage
+
+```typescript
+interface UserTable {
+  user_id: Generated<string>
+  first_name: string | null
+  last_name: string | null
+  email: string | null
+  created_at: Generated<Date>
+}
+```
+
+- **SELECT**: Returns `string` (for `user_id`) or `Date` (for `created_at`)
+- **INSERT**: Optional (`string | undefined` or `Date | undefined`)
+- **UPDATE**: Same as select type
+
+## GeneratedAlways\<T\>
+
+For columns that are always database-generated and cannot be inserted or updated:
+
+```typescript
+type GeneratedAlways<S> = ColumnType<S, never, never>
+```
+
+Useful for PostgreSQL `GENERATED ALWAYS AS IDENTITY` columns:
+
+```typescript
+interface PersonTable {
+  id: GeneratedAlways<number>
+  name: string
+}
+```
+
+## JSONColumnType\<SelectType, InsertType, UpdateType\>
+
+For JSON columns that are inserted/updated as stringified JSON:
+
+```typescript
+type JSONColumnType<
+  SelectType extends object | null,
+  InsertType = string,
+  UpdateType = string,
+> = ColumnType<SelectType, InsertType, UpdateType>
+```
+
+### Example
+
+```typescript
+interface PersonTable {
+  id: Generated<number>
+  metadata: JSONColumnType<{
+    tags: string[]
+    preferences: Record<string, any>
+  }>
+}
+
+// Insert with stringified JSON
+await db.insertInto('person')
+  .values({
+    metadata: JSON.stringify({ tags: ['vip'], preferences: {} })
+  })
+  .execute()
+
+// Select returns parsed object
+const person = await db.selectFrom('person')
+  .selectAll()
+  .executeTakeFirst()
+
+// person.metadata is typed as { tags: string[], preferences: Record<string, any> }
+```
+
+## Selectable\<R\>, Insertable\<R\>, Updateable\<R\>
+
+These utility types extract the appropriate type for each operation:
+
+```typescript
+interface UserTable {
+  user_id: Generated<string>
+  first_name: string | null
+  last_name: string | null
+  email: string | null
+  created_at: Generated<Date>
+}
+
+type UserRow = Selectable<UserTable>
+// {
+//   user_id: string
+//   first_name: string | null
+//   last_name: string | null
+//   email: string | null
+//   created_at: Date
+// }
+
+type InsertableUserRow = Insertable<UserTable>
+// {
+//   user_id?: string
+//   first_name: string | null
+//   last_name: string | null
+//   email: string | null
+//   created_at?: Date
+// }
+
+type UpdateableUserRow = Updateable<UserTable>
+// {
+//   user_id?: string
+//   first_name?: string | null
+//   last_name?: string | null
+//   email?: string | null
+//   created_at?: Date
+// }
+```
+
+## Complete Example
+
+Here's a complete database interface showing various column types:
+
+```typescript
+import { 
+  Generated, 
+  GeneratedAlways,
+  ColumnType, 
+  JSONColumnType,
+  Selectable,
+  Insertable,
+  Updateable
+} from 'kysely'
+
+interface Database {
+  user: UserTable
+  post: PostTable
+}
+
+interface UserTable {
+  id: GeneratedAlways<number>
+  username: string
+  email: string
+  password_hash: ColumnType<string, string, never> // Cannot be updated
+  created_at: Generated<Date>
+  updated_at: ColumnType<Date, Date | undefined, Date>
+}
+
+interface PostTable {
+  id: Generated<number>
+  user_id: number
+  title: string
+  content: string
+  metadata: JSONColumnType<{
+    tags: string[]
+    views: number
+  }>
+  published_at: Date | null
+  created_at: Generated<Date>
+}
+
+// Extract types for use in your application
+export type User = Selectable<UserTable>
+export type NewUser = Insertable<UserTable>
+export type UserUpdate = Updateable<UserTable>
+
+export type Post = Selectable<PostTable>
+export type NewPost = Insertable<PostTable>
+export type PostUpdate = Updateable<PostTable>
+```
+
+## Best Practices
+
+<Tip>
+  Use `Generated<T>` for auto-increment IDs and timestamp columns that have database defaults.
+</Tip>
+
+<Tip>
+  Use `GeneratedAlways<T>` for identity columns or computed columns that the database always generates.
+</Tip>
+
+<Warning>
+  Define nullable columns as `string | null`, not `string | undefined`. SQL databases distinguish between NULL and missing values.
+</Warning>
+
+<Note>
+  Export `Selectable`, `Insertable`, and `Updateable` type variants from your table definitions for use throughout your application.
+</Note>

@@ -1,0 +1,321 @@
+---
+title: Update Queries
+description: Learn how to update data in your database using Kysely's UpdateQueryBuilder with type-safe update statements.
+---
+
+The `UpdateQueryBuilder` is used to build and execute UPDATE queries in Kysely. It provides a fluent API for updating rows with type safety.
+
+## Basic Usage
+
+### Update a Single Row
+
+Update a row in a table:
+
+```typescript
+const result = await db
+  .updateTable('person')
+  .set({
+    first_name: 'Jennifer',
+    last_name: 'Aniston'
+  })
+  .where('id', '=', 1)
+  .executeTakeFirst()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+update "person" set "first_name" = $1, "last_name" = $2 where "id" = $3
+```
+
+### Update with Complex Values
+
+You can provide a callback to the `set` method to get access to an expression builder:
+
+```typescript
+const result = await db
+  .updateTable('person')
+  .set((eb) => ({
+    age: eb('age', '+', 1),
+    first_name: eb.selectFrom('pet').select('name').limit(1),
+    last_name: 'updated',
+  }))
+  .where('id', '=', 1)
+  .executeTakeFirst()
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+update "person"
+set
+  "first_name" = (select "name" from "pet" limit $1),
+  "age" = "age" + $2,
+  "last_name" = $3
+where
+  "id" = $4
+```
+
+### Update Column by Column
+
+You can also provide two arguments where the first is the column and the second is the value:
+
+```typescript
+import { sql } from 'kysely'
+
+const result = await db
+  .updateTable('person')
+  .set('first_name', 'Foo')
+  // Both arguments can be arbitrary expressions
+  .set(sql<string>`address['postalCode']`, (eb) => eb.val('61710'))
+  .where('id', '=', 1)
+  .executeTakeFirst()
+```
+
+## Returning Data
+
+On PostgreSQL you can chain `returning` to get the updated rows' columns:
+
+```typescript
+const row = await db
+  .updateTable('person')
+  .set({
+    first_name: 'Jennifer',
+    last_name: 'Aniston'
+  })
+  .where('id', '=', 1)
+  .returning('id')
+  .executeTakeFirstOrThrow()
+
+row.id
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+update "person" set "first_name" = $1, "last_name" = $2 where "id" = $3 returning "id"
+```
+
+Return all columns:
+
+```typescript
+const row = await db
+  .updateTable('person')
+  .set({ first_name: 'Jennifer' })
+  .where('id', '=', 1)
+  .returningAll()
+  .executeTakeFirstOrThrow()
+```
+
+## Advanced Expressions
+
+Values can be arbitrary expressions including raw SQL snippets and subqueries:
+
+```typescript
+import { sql } from 'kysely'
+
+const result = await db
+  .updateTable('person')
+  .set(({ selectFrom, ref, fn, eb }) => ({
+    first_name: selectFrom('person').select('first_name').limit(1),
+    middle_name: ref('first_name'),
+    age: eb('age', '+', 1),
+    last_name: sql<string>`${'Ani'} || ${'ston'}`,
+  }))
+  .where('id', '=', 1)
+  .executeTakeFirst()
+
+console.log(result.numUpdatedRows)
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+update "person" set
+"first_name" = (select "first_name" from "person" limit $1),
+"middle_name" = "first_name",
+"age" = "age" + $2,
+"last_name" = $3 || $4
+where "id" = $5
+```
+
+## Update with Joins
+
+### PostgreSQL: Update from Join
+
+On PostgreSQL, you can use the `from` method:
+
+```typescript
+db.updateTable('person')
+  .from('pet')
+  .set((eb) => ({
+    first_name: eb.ref('pet.name')
+  }))
+  .whereRef('pet.owner_id', '=', 'person.id')
+```
+
+The generated SQL (PostgreSQL):
+
+```sql
+update "person"
+set "first_name" = "pet"."name"
+from "pet"
+where "pet"."owner_id" = "person"."id"
+```
+
+### MySQL: Direct Table Joins
+
+MySQL allows you to join tables directly and update rows of all joined tables:
+
+```typescript
+const result = await db
+  .updateTable(['person', 'pet'])
+  .set('person.first_name', 'Updated person')
+  .set('pet.name', 'Updated doggo')
+  .whereRef('person.id', '=', 'pet.owner_id')
+  .where('person.id', '=', 1)
+  .executeTakeFirst()
+```
+
+The generated SQL (MySQL):
+
+```sql
+update `person`, `pet`
+set
+  `person`.`first_name` = ?,
+  `pet`.`name` = ?
+where `person`.`id` = `pet`.`owner_id`
+and `person`.`id` = ?
+```
+
+### Using Join Methods (PostgreSQL)
+
+```typescript
+await db
+  .updateTable('person')
+  .innerJoin('pet', 'pet.owner_id', 'person.id')
+  .set('person.first_name', 'John')
+  .where('pet.name', '=', 'Doggo')
+  .execute()
+```
+
+## Limit and Order By
+
+### Limit (MySQL)
+
+On MySQL and some other databases, you can limit the number of updated rows:
+
+```typescript
+await db
+  .updateTable('person')
+  .set({ first_name: 'Foo' })
+  .limit(2)
+  .execute()
+```
+
+The generated SQL (MySQL):
+
+```sql
+update `person` set `first_name` = ? limit ?
+```
+
+### Order By (MySQL)
+
+```typescript
+await db
+  .updateTable('person')
+  .set({ first_name: 'Foo' })
+  .orderBy('age', 'desc')
+  .limit(1)
+  .execute()
+```
+
+## Top Clause (MS SQL Server)
+
+Update the first N rows:
+
+```typescript
+await db.updateTable('person')
+  .top(1)
+  .set({ first_name: 'Foo' })
+  .where('age', '>', 18)
+  .executeTakeFirstOrThrow()
+```
+
+The generated SQL (MS SQL Server):
+
+```sql
+update top(1) "person" set "first_name" = @1 where "age" > @2
+```
+
+Update a percentage:
+
+```typescript
+await db.updateTable('person')
+  .top(50, 'percent')
+  .set({ first_name: 'Foo' })
+  .where('age', '>', 18)
+  .executeTakeFirstOrThrow()
+```
+
+The generated SQL (MS SQL Server):
+
+```sql
+update top(50) percent "person" set "first_name" = @1 where "age" > @2
+```
+
+## Where Conditions
+
+All the standard where methods are available:
+
+```typescript
+await db
+  .updateTable('person')
+  .set({ first_name: 'Jennifer' })
+  .where('id', '=', 1)
+  .where('last_name', 'is not', null)
+  .execute()
+```
+
+See the [UpdateQueryBuilder](/api/update-query-builder) documentation for more filtering options.
+
+## API Reference
+
+### Main Methods
+
+- `updateTable(table)` - Specify the table to update
+- `set(updates)` - Set the values to update
+- `set(column, value)` - Set a single column value
+- `where(...)` - Add WHERE conditions
+- `whereRef(...)` - Add WHERE conditions comparing columns
+- `from(table)` - Add FROM clause (PostgreSQL)
+- `innerJoin()`, `leftJoin()`, `rightJoin()`, `fullJoin()` - Join tables
+- `orderBy(...)` - Order rows (MySQL)
+- `limit(n)` - Limit updated rows (MySQL)
+- `top(n)` - Update top N rows (MS SQL Server)
+- `returning(...)` - Return columns from updated rows
+- `returningAll()` - Return all columns
+- `clearWhere()` - Clear WHERE conditions
+- `clearOrderBy()` - Clear ORDER BY clause
+- `modifyEnd(modifier)` - Add custom SQL
+- `execute()` - Execute the query
+- `executeTakeFirst()` - Execute and return first result
+- `executeTakeFirstOrThrow()` - Execute and return first result or throw
+
+### Result Object
+
+The return value is an instance of `UpdateResult`:
+
+```typescript
+interface UpdateResult {
+  /**
+   * The number of rows updated
+   */
+  numUpdatedRows?: bigint | undefined
+
+  /**
+   * The number of rows changed (MySQL)
+   */
+  numChangedRows?: bigint | undefined
+}
+```

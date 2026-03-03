@@ -1,0 +1,346 @@
+---
+title: Updateable
+description: Extract the update type from a table interface in Kysely
+---
+
+## Type Signature
+
+```typescript
+type Updateable<R> = DrainOuterGeneric<{
+  [K in UpdateKeys<R>]?: UpdateType<R[K]>
+}>
+```
+
+## Overview
+
+`Updateable<T>` is a utility type that extracts the update type from all columns in a table interface. It resolves the `UpdateType` from any [`ColumnType`](/api/types/column-type) definitions and creates a type representing what you can update in the table.
+
+## Type Parameters
+
+<ParamField path="R" type="interface" required>
+  A table interface with column definitions.
+</ParamField>
+
+## Behavior
+
+- Extracts the third type parameter (`UpdateType`) from each `ColumnType<SelectType, InsertType, UpdateType>`
+- For regular types without `ColumnType`, uses the type as-is
+- **All fields are optional** (since you typically update only some columns)
+- Excludes columns where `UpdateType` is `never`
+
+## Examples
+
+### Basic Usage
+
+```typescript
+import { Generated, ColumnType, Updateable } from 'kysely'
+
+interface PersonTable {
+  id: Generated<number>
+  first_name: string
+  last_name: string
+  created_at: ColumnType<Date, string, never>
+}
+
+type UpdateablePerson = Updateable<PersonTable>
+// {
+//   id?: number
+//   first_name?: string
+//   last_name?: string
+//   // created_at excluded (UpdateType is never)
+// }
+```
+
+Notice:
+- All fields are optional (updates are partial by nature)
+- `created_at` is excluded because its `UpdateType` is `never`
+
+### Using with Update Queries
+
+```typescript
+interface Database {
+  person: PersonTable
+}
+
+const db = new Kysely<Database>({ /* ... */ })
+
+// Type-safe update
+const updates: UpdateablePerson = {
+  first_name: 'John',
+  last_name: 'Doe'
+}
+
+await db
+  .updateTable('person')
+  .set(updates)
+  .where('id', '=', 1)
+  .execute()
+
+// Or inline
+await db
+  .updateTable('person')
+  .set({
+    last_name: 'Smith'
+  })
+  .where('id', '=', 1)
+  .execute()
+```
+
+### Read-Only Columns
+
+```typescript
+interface PostTable {
+  id: GeneratedAlways<number>
+  title: string
+  content: string
+  created_at: ColumnType<Date, string, never>
+  updated_at: ColumnType<Date, string, string>
+}
+
+type UpdateablePost = Updateable<PostTable>
+// {
+//   title?: string
+//   content?: string
+//   updated_at?: string
+//   // id excluded (GeneratedAlways has UpdateType = never)
+//   // created_at excluded (UpdateType = never)
+// }
+
+await db
+  .updateTable('post')
+  .set({
+    title: 'New Title',
+    updated_at: new Date().toISOString()
+  })
+  .where('id', '=', 1)
+  .execute()
+
+// Type error - can't update read-only columns
+await db
+  .updateTable('post')
+  .set({
+    id: 999,           // Error!
+    created_at: '2024-01-01'  // Error!
+  })
+  .where('id', '=', 1)
+  .execute()
+```
+
+### Different Types for Update
+
+```typescript
+interface EventTable {
+  id: Generated<number>
+  name: string
+  // Accept string for updates, but return Date for select
+  event_date: ColumnType<Date, string, string>
+  // JSON column: accept string, return object
+  metadata: ColumnType<{ tags: string[] }, string, string>
+}
+
+type UpdateableEvent = Updateable<EventTable>
+// {
+//   id?: number
+//   name?: string
+//   event_date?: string
+//   metadata?: string
+// }
+
+await db
+  .updateTable('event')
+  .set({
+    name: 'Updated Conference',
+    event_date: '2024-12-15',
+    metadata: JSON.stringify({ tags: ['tech', 'updated'] })
+  })
+  .where('id', '=', 1)
+  .execute()
+```
+
+### All Fields Optional
+
+Unlike [`Insertable`](/api/types/insertable), all fields in `Updateable` are optional since updates are typically partial:
+
+```typescript
+interface UserTable {
+  id: Generated<number>
+  username: string     // Required in Insertable
+  email: string        // Required in Insertable
+  bio: string | null
+}
+
+type UpdateableUser = Updateable<UserTable>
+// {
+//   id?: number
+//   username?: string    // Optional in Updateable
+//   email?: string       // Optional in Updateable
+//   bio?: string | null
+// }
+
+// Valid - update only one field
+await db
+  .updateTable('user')
+  .set({ bio: 'New bio' })
+  .where('id', '=', 1)
+  .execute()
+
+// Valid - update multiple fields
+await db
+  .updateTable('user')
+  .set({
+    username: 'newusername',
+    email: 'newemail@example.com'
+  })
+  .where('id', '=', 1)
+  .execute()
+```
+
+## Common Patterns
+
+### Function Parameters
+
+```typescript
+import { Selectable, Updateable } from 'kysely'
+
+type Person = Selectable<PersonTable>
+type PersonUpdate = Updateable<PersonTable>
+
+async function updatePerson(
+  id: number,
+  updates: PersonUpdate
+): Promise<Person> {
+  return await db
+    .updateTable('person')
+    .set(updates)
+    .where('id', '=', id)
+    .returningAll()
+    .executeTakeFirstOrThrow()
+}
+
+// Usage
+const updated = await updatePerson(1, {
+  first_name: 'Jane'
+})
+```
+
+### Partial Updates with Type Safety
+
+```typescript
+type PersonUpdate = Updateable<PersonTable>
+
+function validateUpdate(updates: PersonUpdate) {
+  if (updates.first_name !== undefined && updates.first_name.length === 0) {
+    throw new Error('First name cannot be empty')
+  }
+  if (updates.last_name !== undefined && updates.last_name.length === 0) {
+    throw new Error('Last name cannot be empty')
+  }
+}
+
+const updates: PersonUpdate = { first_name: 'John' }
+validateUpdate(updates)
+
+await db
+  .updateTable('person')
+  .set(updates)
+  .where('id', '=', 1)
+  .execute()
+```
+
+### Conditional Updates
+
+```typescript
+type PersonUpdate = Updateable<PersonTable>
+
+async function conditionalUpdate(id: number) {
+  const updates: PersonUpdate = {}
+
+  const shouldUpdateName = true
+  if (shouldUpdateName) {
+    updates.first_name = 'NewName'
+  }
+
+  const shouldUpdateEmail = false
+  if (shouldUpdateEmail) {
+    updates.email = 'newemail@example.com'
+  }
+
+  if (Object.keys(updates).length > 0) {
+    await db
+      .updateTable('person')
+      .set(updates)
+      .where('id', '=', id)
+      .execute()
+  }
+}
+```
+
+### Combining with Omit for Restricted Updates
+
+```typescript
+// Prevent updating certain fields
+type SafePersonUpdate = Omit<Updateable<PersonTable>, 'id'>
+
+function updatePersonSafely(id: number, updates: SafePersonUpdate) {
+  return db
+    .updateTable('person')
+    .set(updates)
+    .where('id', '=', id)
+    .execute()
+}
+
+// Type error - can't update id
+updatePersonSafely(1, {
+  id: 999,  // Error!
+  first_name: 'John'
+})
+```
+
+### Repository Pattern
+
+```typescript
+import { Selectable, Insertable, Updateable } from 'kysely'
+
+type Person = Selectable<PersonTable>
+type NewPerson = Insertable<PersonTable>
+type PersonUpdate = Updateable<PersonTable>
+
+class PersonRepository {
+  async create(person: NewPerson): Promise<Person> {
+    return await db
+      .insertInto('person')
+      .values(person)
+      .returningAll()
+      .executeTakeFirstOrThrow()
+  }
+
+  async update(id: number, updates: PersonUpdate): Promise<Person> {
+    return await db
+      .updateTable('person')
+      .set(updates)
+      .where('id', '=', id)
+      .returningAll()
+      .executeTakeFirstOrThrow()
+  }
+
+  async findById(id: number): Promise<Person | undefined> {
+    return await db
+      .selectFrom('person')
+      .selectAll()
+      .where('id', '=', id)
+      .executeTakeFirst()
+  }
+}
+```
+
+## Related Types
+
+- [`ColumnType<SelectType, InsertType, UpdateType>`](/api/types/column-type) - Define different types for different operations
+- [`Selectable<T>`](/api/types/selectable) - Extract select types from a table interface
+- [`Insertable<T>`](/api/types/insertable) - Extract insert types from a table interface
+- [`Generated<T>`](/api/types/generated) - Shortcut for database-generated columns
+- [`GeneratedAlways<T>`](/api/types/generated) - Shortcut for always-generated columns
+
+## Source
+
+[View source on GitHub](https://github.com/kysely-org/kysely/blob/master/src/util/column-type.ts)

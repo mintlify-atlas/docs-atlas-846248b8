@@ -1,0 +1,274 @@
+---
+title: MigrationProvider
+description: Interfaces and classes for providing migrations to the Kysely Migrator.
+---
+
+## Overview
+
+Migration providers supply migrations to the `Migrator` class. Kysely provides a built-in `FileMigrationProvider` for Node.js that reads migrations from a folder, but you can implement custom providers for other use cases.
+
+## MigrationProvider Interface
+
+The base interface that all migration providers must implement.
+
+### getMigrations()
+
+```typescript
+getMigrations(): Promise<Record<string, Migration>>
+```
+
+Returns all migrations, both old and new.
+
+The keys of the returned object are migration names and values are the migrations. The order of migrations is determined by the alphabetical order of the migration names. The items in the object don't need to be sorted - Kysely sorts them automatically.
+
+#### Example Implementation
+
+```typescript
+class CustomMigrationProvider implements MigrationProvider {
+  async getMigrations(): Promise<Record<string, Migration>> {
+    return {
+      '001_initial': {
+        async up(db) {
+          // migration code
+        },
+        async down(db) {
+          // rollback code
+        }
+      },
+      '002_add_users': {
+        async up(db) {
+          // migration code
+        }
+      }
+    }
+  }
+}
+```
+
+## FileMigrationProvider
+
+Reads all migrations from a folder in Node.js.
+
+This provider automatically imports migration files with the following extensions:
+- `.js`
+- `.ts` (excluding `.d.ts`)
+- `.mjs`
+- `.mts` (excluding `.d.mts`)
+
+### Constructor
+
+```typescript
+new FileMigrationProvider(props: FileMigrationProviderProps)
+```
+
+### Configuration
+
+#### FileMigrationProviderProps
+
+<ParamField path="fs" type="FileMigrationProviderFS" required>
+  A file system implementation. In Node.js, use `promises as fs` from the `node:fs` module.
+  
+  The object must have a `readdir(path: string): Promise<string[]>` method.
+</ParamField>
+
+<ParamField path="path" type="FileMigrationProviderPath" required>
+  A path utility implementation. In Node.js, use the `path` module.
+  
+  The object must have a `join(...path: string[]): string` method.
+</ParamField>
+
+<ParamField path="migrationFolder" type="string" required>
+  The absolute or relative path to the folder containing migration files.
+</ParamField>
+
+### Example
+
+```typescript
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+import { FileMigrationProvider } from 'kysely'
+
+const provider = new FileMigrationProvider({
+  fs,
+  path,
+  migrationFolder: 'path/to/migrations/folder'
+})
+```
+
+### Complete Example with Migrator
+
+```typescript
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+import { Kysely, Migrator, FileMigrationProvider, SqliteDialect } from 'kysely'
+import * as Sqlite from 'better-sqlite3'
+
+const db = new Kysely<any>({
+  dialect: new SqliteDialect({
+    database: Sqlite(':memory:')
+  })
+})
+
+const migrator = new Migrator({
+  db,
+  provider: new FileMigrationProvider({
+    fs,
+    path,
+    migrationFolder: './migrations',
+  })
+})
+
+const { error, results } = await migrator.migrateToLatest()
+
+if (error) {
+  console.error('Migration failed')
+  console.error(error)
+  process.exit(1)
+}
+
+console.log('Migrations completed successfully')
+```
+
+### Migration File Format
+
+Migration files should export a `Migration` object with `up` and optionally `down` methods:
+
+```typescript
+// migrations/001_create_users.ts
+import { Kysely } from 'kysely'
+
+export async function up(db: Kysely<any>): Promise<void> {
+  await db.schema
+    .createTable('users')
+    .addColumn('id', 'serial', (col) => col.primaryKey())
+    .addColumn('name', 'varchar(255)', (col) => col.notNull())
+    .addColumn('email', 'varchar(255)', (col) => col.notNull().unique())
+    .execute()
+}
+
+export async function down(db: Kysely<any>): Promise<void> {
+  await db.schema.dropTable('users').execute()
+}
+```
+
+Alternatively, you can use default exports:
+
+```typescript
+// migrations/002_add_posts.ts
+import { Kysely, Migration } from 'kysely'
+
+const migration: Migration = {
+  async up(db: Kysely<any>): Promise<void> {
+    await db.schema
+      .createTable('posts')
+      .addColumn('id', 'serial', (col) => col.primaryKey())
+      .addColumn('title', 'varchar(255)', (col) => col.notNull())
+      .addColumn('user_id', 'integer', (col) => 
+        col.references('users.id').onDelete('cascade').notNull()
+      )
+      .execute()
+  },
+
+  async down(db: Kysely<any>): Promise<void> {
+    await db.schema.dropTable('posts').execute()
+  }
+}
+
+export default migration
+```
+
+### How It Works
+
+1. **File Discovery**: The provider reads all files from the specified `migrationFolder`
+2. **File Filtering**: Only files with valid extensions (`.js`, `.ts`, `.mjs`, `.mts`) are processed
+3. **Dynamic Import**: Each file is dynamically imported using `import()`
+4. **Migration Extraction**: The provider handles both default exports and named exports
+5. **Key Generation**: Migration keys are derived from filenames (without extension)
+
+### Naming Conventions
+
+Migration files should follow a naming convention that ensures proper ordering:
+
+- `001_initial_schema.ts`
+- `002_add_users_table.ts`
+- `003_add_posts_table.ts`
+- `2024_01_15_create_comments.ts`
+
+The migration name (key) is the filename without the extension. Kysely sorts migrations alphabetically by these keys.
+
+## Helper Types
+
+### FileMigrationProviderFS
+
+Interface for the file system dependency.
+
+```typescript
+interface FileMigrationProviderFS {
+  readdir(path: string): Promise<string[]>
+}
+```
+
+In Node.js, you can use:
+```typescript
+import { promises as fs } from 'node:fs'
+```
+
+### FileMigrationProviderPath
+
+Interface for the path utility dependency.
+
+```typescript
+interface FileMigrationProviderPath {
+  join(...path: string[]): string
+}
+```
+
+In Node.js, you can use:
+```typescript
+import path from 'node:path'
+```
+
+## Custom Migration Providers
+
+You can create custom migration providers for different storage mechanisms (databases, remote APIs, etc.):
+
+```typescript
+import { MigrationProvider, Migration } from 'kysely'
+
+class DatabaseMigrationProvider implements MigrationProvider {
+  constructor(private configDb: Kysely<any>) {}
+
+  async getMigrations(): Promise<Record<string, Migration>> {
+    const migrations = await this.configDb
+      .selectFrom('stored_migrations')
+      .select(['name', 'up_sql', 'down_sql'])
+      .execute()
+
+    const result: Record<string, Migration> = {}
+
+    for (const migration of migrations) {
+      result[migration.name] = {
+        async up(db) {
+          await db.executeQuery(migration.up_sql)
+        },
+        async down(db) {
+          if (migration.down_sql) {
+            await db.executeQuery(migration.down_sql)
+          }
+        }
+      }
+    }
+
+    return result
+  }
+}
+```
+
+## Best Practices
+
+1. **Consistent Naming**: Use a consistent naming scheme for migration files (e.g., timestamp prefix)
+2. **One Change Per Migration**: Keep migrations focused on a single logical change
+3. **Provide Down Methods**: Always implement `down()` methods when possible for rollback capability
+4. **Test Migrations**: Test both `up()` and `down()` methods before deploying
+5. **Idempotent Operations**: Make migrations safe to retry (use `IF NOT EXISTS`, etc.)
+6. **Version Control**: Always commit migration files to version control

@@ -1,0 +1,226 @@
+---
+title: RawBuilder
+description: Create raw SQL snippets and queries with type safety in Kysely
+---
+
+# RawBuilder
+
+An instance of `RawBuilder` can be used to create raw SQL snippets or queries. You shouldn't need to create `RawBuilder` instances directly. Instead you should use the `sql` template tag.
+
+## Type Parameters
+
+<ParamField path="O" type="any" required>
+  The output type of the raw SQL expression
+</ParamField>
+
+## Properties
+
+### isRawBuilder
+
+Identifier property that's always `true` for RawBuilder instances.
+
+```typescript
+get isRawBuilder(): true
+```
+
+## Methods
+
+### as
+
+Returns an aliased version of the SQL expression.
+
+```typescript
+as<A extends string>(alias: A): AliasedRawBuilder<O, A>
+as<A extends string>(alias: Expression<any>): AliasedRawBuilder<O, A>
+```
+
+<ParamField path="alias" type="string | Expression" required>
+  The alias name for the expression
+</ParamField>
+
+In addition to slapping `as "the_alias"` to the end of the SQL, this method also provides strict typing.
+
+**Example:**
+
+```typescript
+import { sql } from 'kysely'
+
+const result = await db
+  .selectFrom('person')
+  .select(
+    sql<string>`concat(first_name, ' ', last_name)`.as('full_name')
+  )
+  .executeTakeFirstOrThrow()
+
+// `full_name: string` field exists in the result type.
+console.log(result.full_name)
+```
+
+**Raw SQL alias example:**
+
+You can also pass in a raw SQL snippet but in that case you must provide the alias as the only type argument:
+
+```typescript
+import { sql } from 'kysely'
+
+const values = sql<{ a: number, b: string }>`(values (1, 'foo'))`
+
+// The alias is `t(a, b)` which specifies the column names
+// in addition to the table name. We must tell kysely that
+// columns of the table can be referenced through `t`
+// by providing an explicit type argument.
+const aliasedValues = values.as<'t'>(sql`t(a, b)`)
+
+await db
+  .insertInto('person')
+  .columns(['first_name', 'last_name'])
+  .expression(
+    db.selectFrom(aliasedValues).select(['t.a', 't.b'])
+  )
+  .execute()
+```
+
+### $castTo
+
+Change the output type of the raw expression.
+
+```typescript
+$castTo<C>(): RawBuilder<C>
+```
+
+<ParamField path="C" type="type parameter" required>
+  The new output type
+</ParamField>
+
+This method call doesn't change the SQL in any way. This methods simply returns a copy of this `RawBuilder` with a new output type.
+
+### $notNull
+
+Omit null from the expression's type.
+
+```typescript
+$notNull(): RawBuilder<Exclude<O, null>>
+```
+
+This function can be useful in cases where you know an expression can't be null, but Kysely is unable to infer it.
+
+This method call doesn't change the SQL in any way. This methods simply returns a copy of `this` with a new output type.
+
+### withPlugin
+
+Adds a plugin for this SQL snippet.
+
+```typescript
+withPlugin(plugin: KyselyPlugin): RawBuilder<O>
+```
+
+<ParamField path="plugin" type="KyselyPlugin" required>
+  The plugin to add
+</ParamField>
+
+### compile
+
+Compiles the builder to a `CompiledQuery`.
+
+```typescript
+compile(executorProvider: QueryExecutorProvider): CompiledQuery<O>
+```
+
+<ParamField path="executorProvider" type="QueryExecutorProvider" required>
+  The query executor provider (typically the Kysely instance)
+</ParamField>
+
+**Example:**
+
+```typescript
+import { sql } from 'kysely'
+
+const compiledQuery = sql`select * from ${sql.table('person')}`.compile(db)
+console.log(compiledQuery.sql)
+```
+
+### execute
+
+Executes the raw query.
+
+```typescript
+execute(executorProvider: QueryExecutorProvider): Promise<QueryResult<O>>
+```
+
+<ParamField path="executorProvider" type="QueryExecutorProvider" required>
+  The query executor provider (typically the Kysely instance)
+</ParamField>
+
+**Example:**
+
+```typescript
+import { sql } from 'kysely'
+
+const result = await sql`select * from ${sql.table('person')}`.execute(db)
+```
+
+### toOperationNode
+
+Converts the builder to an operation node for internal use.
+
+```typescript
+toOperationNode(): RawNode
+```
+
+## Related Types
+
+### AliasedRawBuilder
+
+`RawBuilder` with an alias. The result of calling `RawBuilder.as`.
+
+```typescript
+interface AliasedRawBuilder<O = unknown, A extends string = never>
+```
+
+<ParamField path="O" type="any">
+  The output type of the expression
+</ParamField>
+
+<ParamField path="A" type="string">
+  The alias name
+</ParamField>
+
+#### Properties
+
+**rawBuilder**
+
+Returns the underlying `RawBuilder` instance.
+
+```typescript
+get rawBuilder(): RawBuilder<O>
+```
+
+## Usage with the sql template tag
+
+The `sql` template tag is the primary way to create `RawBuilder` instances:
+
+```typescript
+import { sql } from 'kysely'
+
+// Simple raw SQL
+const query = sql`select * from person`
+
+// With parameters
+const name = 'Jennifer'
+const query = sql`select * from person where first_name = ${name}`
+
+// With column references
+const query = sql`select * from person where ${sql.ref('first_name')} = ${name}`
+
+// With table references
+const query = sql`select * from ${sql.table('person')}`
+
+// Typed raw SQL
+interface Person {
+  id: number
+  first_name: string
+  last_name: string
+}
+
+const result = await sql<Person>`select * from person`.execute(db)
+```

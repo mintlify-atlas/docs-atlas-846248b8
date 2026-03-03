@@ -1,0 +1,253 @@
+---
+title: Insertable
+description: Extract the insert type from a table interface in Kysely
+---
+
+## Type Signature
+
+```typescript
+type Insertable<R> = DrainOuterGeneric<
+  {
+    [K in NonNullableInsertKeys<R>]: InsertType<R[K]>
+  } & {
+    [K in NullableInsertKeys<R>]?: InsertType<R[K]>
+  }
+>
+```
+
+## Overview
+
+`Insertable<T>` is a utility type that extracts the insert type from all columns in a table interface. It resolves the `InsertType` from any [`ColumnType`](/api/types/column-type) definitions and creates a type representing what you can insert into the table.
+
+## Type Parameters
+
+<ParamField path="R" type="interface" required>
+  A table interface with column definitions.
+</ParamField>
+
+## Behavior
+
+- Extracts the second type parameter (`InsertType`) from each `ColumnType<SelectType, InsertType, UpdateType>`
+- For regular types without `ColumnType`, uses the type as-is
+- Fields with nullable insert types (can be `undefined` or `null`) become optional
+- Fields with non-nullable insert types remain required
+- Excludes columns where `InsertType` is `never`
+
+## Examples
+
+### Basic Usage
+
+```typescript
+import { Generated, ColumnType, Insertable } from 'kysely'
+
+interface PersonTable {
+  id: Generated<number>
+  first_name: string
+  last_name: string
+  created_at: ColumnType<Date, string, never>
+}
+
+type InsertablePerson = Insertable<PersonTable>
+// {
+//   id?: number
+//   first_name: string
+//   last_name: string
+//   created_at: string
+// }
+```
+
+Notice:
+- `id` is optional (because `Generated<number>` allows `undefined` for inserts)
+- `created_at` is a `string` (not `Date`) for inserts
+- `first_name` and `last_name` are required strings
+
+### Using with Insert Queries
+
+```typescript
+interface Database {
+  person: PersonTable
+}
+
+const db = new Kysely<Database>({ /* ... */ })
+
+// Type-safe insert
+const newPerson: InsertablePerson = {
+  first_name: 'John',
+  last_name: 'Doe',
+  created_at: '2024-01-01T00:00:00Z'
+}
+
+await db
+  .insertInto('person')
+  .values(newPerson)
+  .execute()
+
+// Or inline
+await db
+  .insertInto('person')
+  .values({
+    first_name: 'Jane',
+    last_name: 'Smith',
+    created_at: new Date().toISOString()
+  })
+  .execute()
+```
+
+### With GeneratedAlways Columns
+
+```typescript
+interface ProductTable {
+  id: GeneratedAlways<number>
+  name: string
+  price: number
+  created_at: Generated<Date>
+}
+
+type InsertableProduct = Insertable<ProductTable>
+// {
+//   name: string
+//   price: number
+//   created_at?: Date
+// }
+// Note: id is excluded because GeneratedAlways has InsertType = never
+```
+
+### Optional vs Required Fields
+
+```typescript
+interface UserTable {
+  // Required fields (non-nullable insert type)
+  username: string
+  email: string
+  
+  // Optional fields (nullable insert type)
+  id: Generated<number>
+  middle_name: string | null
+  bio: string | undefined
+  avatar_url?: string
+}
+
+type InsertableUser = Insertable<UserTable>
+// {
+//   username: string          // required
+//   email: string             // required
+//   id?: number               // optional (Generated)
+//   middle_name?: string | null    // optional (nullable)
+//   bio?: string | undefined       // optional (nullable)
+//   avatar_url?: string            // optional (optional in table)
+// }
+```
+
+### Different Types for Insert
+
+```typescript
+interface EventTable {
+  id: Generated<number>
+  name: string
+  // Accept string for insert, but return Date for select
+  event_date: ColumnType<Date, string, string>
+  // JSON column: accept string, return object
+  metadata: ColumnType<{ tags: string[] }, string, string>
+  // Read-only column
+  created_at: ColumnType<Date, never, never>
+}
+
+type InsertableEvent = Insertable<EventTable>
+// {
+//   id?: number
+//   name: string
+//   event_date: string
+//   metadata: string
+//   // created_at excluded (InsertType is never)
+// }
+
+await db
+  .insertInto('event')
+  .values({
+    name: 'Conference',
+    event_date: '2024-06-15',
+    metadata: JSON.stringify({ tags: ['tech', 'ai'] })
+  })
+  .execute()
+```
+
+## Common Patterns
+
+### Function Parameters
+
+```typescript
+type InsertablePerson = Insertable<PersonTable>
+
+async function createPerson(person: InsertablePerson) {
+  return await db
+    .insertInto('person')
+    .values(person)
+    .returningAll()
+    .executeTakeFirstOrThrow()
+}
+
+// Usage
+const person = await createPerson({
+  first_name: 'John',
+  last_name: 'Doe',
+  created_at: new Date().toISOString()
+})
+```
+
+### Bulk Inserts
+
+```typescript
+type InsertablePerson = Insertable<PersonTable>
+
+const people: InsertablePerson[] = [
+  { first_name: 'John', last_name: 'Doe', created_at: '2024-01-01' },
+  { first_name: 'Jane', last_name: 'Smith', created_at: '2024-01-02' },
+]
+
+await db
+  .insertInto('person')
+  .values(people)
+  .execute()
+```
+
+### Combining with Selectable
+
+```typescript
+import { Selectable, Insertable } from 'kysely'
+
+type Person = Selectable<PersonTable>
+type NewPerson = Insertable<PersonTable>
+
+async function createPerson(newPerson: NewPerson): Promise<Person> {
+  return await db
+    .insertInto('person')
+    .values(newPerson)
+    .returningAll()
+    .executeTakeFirstOrThrow()
+}
+```
+
+### Partial Insertable with Pick
+
+```typescript
+// Only require certain fields
+type PersonNameOnly = Pick<InsertablePerson, 'first_name' | 'last_name'>
+
+function validatePersonName(name: PersonNameOnly) {
+  if (!name.first_name || !name.last_name) {
+    throw new Error('Name is required')
+  }
+}
+```
+
+## Related Types
+
+- [`ColumnType<SelectType, InsertType, UpdateType>`](/api/types/column-type) - Define different types for different operations
+- [`Selectable<T>`](/api/types/selectable) - Extract select types from a table interface
+- [`Updateable<T>`](/api/types/updateable) - Extract update types from a table interface
+- [`Generated<T>`](/api/types/generated) - Shortcut for database-generated columns
+- [`GeneratedAlways<T>`](/api/types/generated) - Shortcut for always-generated columns
+
+## Source
+
+[View source on GitHub](https://github.com/kysely-org/kysely/blob/master/src/util/column-type.ts)

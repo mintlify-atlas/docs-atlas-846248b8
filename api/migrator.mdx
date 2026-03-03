@@ -1,0 +1,321 @@
+---
+title: Migrator
+description: A class for running database migrations in Kysely.
+---
+
+## Overview
+
+The `Migrator` class provides methods for managing database migrations. It handles migration execution, rollback, and tracking of migration state.
+
+## Constructor
+
+```typescript
+new Migrator(props: MigratorProps)
+```
+
+Creates a new Migrator instance.
+
+### Example
+
+```typescript
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+import * as Sqlite from 'better-sqlite3'
+import {
+  FileMigrationProvider,
+  Kysely,
+  Migrator,
+  SqliteDialect
+} from 'kysely'
+
+const db = new Kysely<any>({
+  dialect: new SqliteDialect({
+    database: Sqlite(':memory:')
+  })
+})
+
+const migrator = new Migrator({
+  db,
+  provider: new FileMigrationProvider({
+    fs,
+    path,
+    migrationFolder: 'some/path/to/migrations',
+  })
+})
+```
+
+## Configuration
+
+### MigratorProps
+
+<ParamField path="db" type="Kysely<any>" required>
+  The Kysely database instance to run migrations against.
+</ParamField>
+
+<ParamField path="provider" type="MigrationProvider" required>
+  A migration provider that supplies migrations to execute. Use `FileMigrationProvider` to load migrations from a folder.
+</ParamField>
+
+<ParamField path="migrationTableName" type="string" default="kysely_migration">
+  The name of the internal migration table. 
+  
+  **Warning:** If you specify this, you must ALWAYS use the same value. Changing it after migrations have run will cause Kysely to create a new empty migration table and attempt to re-run migrations.
+</ParamField>
+
+<ParamField path="migrationLockTableName" type="string" default="kysely_migration_lock">
+  The name of the internal migration lock table.
+  
+  **Warning:** If you specify this, you must ALWAYS use the same value from the beginning of the project.
+</ParamField>
+
+<ParamField path="migrationTableSchema" type="string">
+  The schema of the internal migration tables. Defaults to the default schema on dialects that support schemas.
+  
+  Only works on PostgreSQL and MSSQL.
+  
+  **Warning:** If you specify this, you must ALWAYS use the same value. Changing it will create new migration tables in the new schema.
+</ParamField>
+
+<ParamField path="allowUnorderedMigrations" type="boolean" default={false}>
+  Enforces whether or not migrations must be run in alpha-numeric order.
+  
+  - When `false` (default): migrations must be run in exact alpha-numeric order, checked against already-run migrations in the database. This is the safest option.
+  - When `true`: migrations are still run in alpha-numeric order, but the order is not validated against the database. Kysely will simply run all pending migrations in alpha-numeric order.
+</ParamField>
+
+<ParamField path="nameComparator" type="(name0: string, name1: string) => number">
+  A function that compares migration names when sorting migrations in ascending order.
+  
+  Default is `name0.localeCompare(name1)`.
+</ParamField>
+
+<ParamField path="disableTransactions" type="boolean" default={false}>
+  When `true`, don't run migrations in transactions even if the dialect supports transactional DDL.
+  
+  Useful when some migrations include queries that would fail in a transaction.
+</ParamField>
+
+## Methods
+
+### getMigrations()
+
+```typescript
+getMigrations(): Promise<ReadonlyArray<MigrationInfo>>
+```
+
+Returns a `MigrationInfo` object for each migration. The returned array is sorted by migration name.
+
+<ResponseField name="name" type="string">
+  Name of the migration.
+</ResponseField>
+
+<ResponseField name="migration" type="Migration">
+  The actual migration object.
+</ResponseField>
+
+<ResponseField name="executedAt" type="Date | undefined">
+  When the migration was executed. `undefined` if the migration hasn't been executed yet.
+</ResponseField>
+
+### migrateToLatest()
+
+```typescript
+migrateToLatest(): Promise<MigrationResultSet>
+```
+
+Runs all migrations that have not yet been run.
+
+This method returns a `MigrationResultSet` instance and **never** throws. `MigrationResultSet.error` holds the error if something went wrong. `MigrationResultSet.results` contains information about which migrations were executed and which failed.
+
+This method goes through all possible migrations provided by the provider and runs the ones whose names come alphabetically after the last migration that has been run.
+
+#### Example
+
+```typescript
+const { error, results } = await migrator.migrateToLatest()
+
+results?.forEach((it) => {
+  if (it.status === 'Success') {
+    console.log(`migration "${it.migrationName}" was executed successfully`)
+  } else if (it.status === 'Error') {
+    console.error(`failed to execute migration "${it.migrationName}"`)
+  }
+})
+
+if (error) {
+  console.error('failed to run `migrateToLatest`')
+  console.error(error)
+}
+```
+
+### migrateTo()
+
+```typescript
+migrateTo(targetMigrationName: string | NoMigrations): Promise<MigrationResultSet>
+```
+
+Migrate up or down to a specific migration.
+
+This method returns a `MigrationResultSet` instance and **never** throws.
+
+#### Parameters
+
+<ParamField path="targetMigrationName" type="string | NoMigrations" required>
+  The name of the target migration, or `NO_MIGRATIONS` to migrate all the way down.
+</ParamField>
+
+#### Examples
+
+**Migrate to a specific migration:**
+
+```typescript
+await migrator.migrateTo('some_migration')
+```
+
+**Migrate all the way down:**
+
+If you specify the name of the first migration, this method migrates down to the first migration, but doesn't run the `down` method of the first migration. To migrate all the way down, use the `NO_MIGRATIONS` constant:
+
+```typescript
+import { NO_MIGRATIONS } from 'kysely'
+
+await migrator.migrateTo(NO_MIGRATIONS)
+```
+
+### migrateUp()
+
+```typescript
+migrateUp(): Promise<MigrationResultSet>
+```
+
+Migrate one step up.
+
+This method returns a `MigrationResultSet` instance and **never** throws.
+
+#### Example
+
+```typescript
+await migrator.migrateUp()
+```
+
+### migrateDown()
+
+```typescript
+migrateDown(): Promise<MigrationResultSet>
+```
+
+Migrate one step down.
+
+This method returns a `MigrationResultSet` instance and **never** throws.
+
+#### Example
+
+```typescript
+await migrator.migrateDown()
+```
+
+## Types
+
+### MigrationResultSet
+
+All migration methods return this object instead of throwing errors.
+
+<ResponseField name="error" type="unknown">
+  Defined if something went wrong. An error may have occurred in one of the migrations (check `results` for which one) or before Kysely could determine which migrations to execute (in which case `results` is undefined).
+</ResponseField>
+
+<ResponseField name="results" type="MigrationResult[]">
+  `MigrationResult` for each individual migration that was supposed to be executed.
+  
+  - If all went well, each result's `status` is `Success`
+  - If a migration failed, the failed migration's result has `status` of `Error` and all subsequent results have `status` of `NotExecuted`
+  - Can be `undefined` if an error occurred before determining which migrations to execute
+  - Empty array if there were no migrations to execute
+</ResponseField>
+
+### MigrationResult
+
+<ResponseField name="migrationName" type="string">
+  The name of the migration.
+</ResponseField>
+
+<ResponseField name="direction" type="'Up' | 'Down'">
+  The direction in which this migration was executed.
+</ResponseField>
+
+<ResponseField name="status" type="'Success' | 'Error' | 'NotExecuted'">
+  The execution status:
+  
+  - `Success`: migration was successfully executed (note: may be rolled back if a later migration failed and dialect supports transactional DDL)
+  - `Error`: migration failed (see `MigrationResultSet.error` for details)
+  - `NotExecuted`: migration was supposed to be executed but wasn't because an earlier migration failed
+</ResponseField>
+
+### Migration
+
+Interface that all migrations must implement.
+
+```typescript
+interface Migration {
+  up(db: Kysely<any>): Promise<void>
+  down?(db: Kysely<any>): Promise<void>
+}
+```
+
+<ParamField path="up" type="(db: Kysely<any>) => Promise<void>" required>
+  Method to run when migrating up.
+</ParamField>
+
+<ParamField path="down" type="(db: Kysely<any>) => Promise<void>">
+  Optional method to run when migrating down. If not provided, the migration is skipped when migrating down.
+</ParamField>
+
+### MigrationInfo
+
+Information about a migration returned by `getMigrations()`.
+
+<ResponseField name="name" type="string">
+  Name of the migration.
+</ResponseField>
+
+<ResponseField name="migration" type="Migration">
+  The actual migration object.
+</ResponseField>
+
+<ResponseField name="executedAt" type="Date | undefined">
+  When the migration was executed. `undefined` if not yet executed.
+</ResponseField>
+
+## Constants
+
+### NO_MIGRATIONS
+
+```typescript
+const NO_MIGRATIONS: NoMigrations
+```
+
+Special constant used with `migrateTo()` to migrate all the way down (rolling back all migrations).
+
+### DEFAULT_MIGRATION_TABLE
+
+```typescript
+const DEFAULT_MIGRATION_TABLE = 'kysely_migration'
+```
+
+The default name for the migration tracking table.
+
+### DEFAULT_MIGRATION_LOCK_TABLE
+
+```typescript
+const DEFAULT_MIGRATION_LOCK_TABLE = 'kysely_migration_lock'
+```
+
+The default name for the migration lock table.
+
+### DEFAULT_ALLOW_UNORDERED_MIGRATIONS
+
+```typescript
+const DEFAULT_ALLOW_UNORDERED_MIGRATIONS = false
+```
+
+The default value for the `allowUnorderedMigrations` option.

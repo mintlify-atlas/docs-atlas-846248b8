@@ -1,0 +1,339 @@
+---
+title: Creating Tables
+description: Create tables with columns, constraints, and indexes using Kysely's schema builder
+---
+
+Kysely provides a powerful `CreateTableBuilder` API for defining database tables. Access it through `db.schema.createTable()`.
+
+## Basic Table Creation
+
+Create a simple table with columns:
+
+```typescript
+await db.schema
+  .createTable('person')
+  .addColumn('id', 'integer', (col) => col.primaryKey())
+  .addColumn('first_name', 'varchar(50)', (col) => col.notNull())
+  .addColumn('last_name', 'varchar(255)')
+  .addColumn('email', 'varchar(255)', (col) => col.unique())
+  .execute()
+```
+
+## Column Types and Constraints
+
+### Common Data Types
+
+Kysely supports standard SQL data types:
+
+```typescript
+await db.schema
+  .createTable('product')
+  .addColumn('id', 'integer', (col) => col.autoIncrement().primaryKey())
+  .addColumn('name', 'varchar(255)', (col) => col.notNull())
+  .addColumn('description', 'text')
+  .addColumn('price', 'numeric(8, 2)', (col) => col.notNull())
+  .addColumn('stock', 'integer', (col) => col.defaultTo(0))
+  .addColumn('is_active', 'boolean', (col) => col.defaultTo(true))
+  .addColumn('created_at', 'timestamp', (col) => col.defaultTo(sql`CURRENT_TIMESTAMP`))
+  .execute()
+```
+
+For dialect-specific types, use the `sql` tag:
+
+```typescript
+import { sql } from 'kysely'
+
+await db.schema
+  .createTable('document')
+  .addColumn('id', 'integer', (col) => col.primaryKey())
+  .addColumn('metadata', sql`jsonb`)
+  .execute()
+```
+
+### Column Constraints
+
+The column builder provides these constraint methods:
+
+- **`primaryKey()`** - Mark as primary key
+- **`notNull()`** - Disallow NULL values
+- **`unique()`** - Ensure uniqueness
+- **`defaultTo(value)`** - Set default value
+- **`unsigned()`** - Unsigned integers (MySQL)
+- **`autoIncrement()`** - Auto-incrementing (MySQL, SQLite)
+- **`check(expression)`** - Add check constraint
+
+### Auto-Incrementing IDs
+
+Different databases use different approaches:
+
+**MySQL/SQLite:**
+```typescript
+await db.schema
+  .createTable('person')
+  .addColumn('id', 'integer', (col) => col.autoIncrement().primaryKey())
+  .execute()
+```
+
+**PostgreSQL (serial):**
+```typescript
+await db.schema
+  .createTable('person')
+  .addColumn('id', 'serial', (col) => col.primaryKey())
+  .execute()
+```
+
+**PostgreSQL (identity):**
+```typescript
+await db.schema
+  .createTable('person')
+  .addColumn('id', 'integer', (col) => 
+    col.generatedAlwaysAsIdentity().primaryKey()
+  )
+  .execute()
+```
+
+**MS SQL Server:**
+```typescript
+await db.schema
+  .createTable('person')
+  .addColumn('id', 'integer', (col) => col.identity().primaryKey())
+  .execute()
+```
+
+## Foreign Keys
+
+### Column-Level Foreign Keys
+
+Add foreign key constraints directly to columns:
+
+```typescript
+await db.schema
+  .createTable('pet')
+  .addColumn('id', 'integer', (col) => col.primaryKey())
+  .addColumn('name', 'varchar(255)', (col) => col.notNull())
+  .addColumn('owner_id', 'integer', (col) =>
+    col.references('person.id').onDelete('cascade')
+  )
+  .execute()
+```
+
+### Table-Level Foreign Keys
+
+Some databases (like older MySQL versions) require table-level constraints:
+
+```typescript
+await db.schema
+  .createTable('pet')
+  .addColumn('id', 'integer', (col) => col.primaryKey())
+  .addColumn('owner_id', 'integer')
+  .addForeignKeyConstraint(
+    'pet_owner_fk',
+    ['owner_id'],
+    'person',
+    ['id'],
+    (cb) => cb.onDelete('cascade').onUpdate('cascade')
+  )
+  .execute()
+```
+
+### Composite Foreign Keys
+
+```typescript
+await db.schema
+  .createTable('order_item')
+  .addColumn('order_id', 'integer')
+  .addColumn('product_id', 'integer')
+  .addColumn('quantity', 'integer')
+  .addForeignKeyConstraint(
+    'order_item_order_fk',
+    ['order_id', 'product_id'],
+    'order',
+    ['id', 'product_id']
+  )
+  .execute()
+```
+
+## Table Constraints
+
+### Primary Key Constraints
+
+Define composite primary keys:
+
+```typescript
+await db.schema
+  .createTable('user_role')
+  .addColumn('user_id', 'integer')
+  .addColumn('role_id', 'integer')
+  .addPrimaryKeyConstraint('user_role_pk', ['user_id', 'role_id'])
+  .execute()
+```
+
+### Unique Constraints
+
+```typescript
+await db.schema
+  .createTable('person')
+  .addColumn('id', 'integer', (col) => col.primaryKey())
+  .addColumn('first_name', 'varchar(64)')
+  .addColumn('last_name', 'varchar(64)')
+  .addUniqueConstraint('person_name_unique', ['first_name', 'last_name'])
+  .execute()
+```
+
+On PostgreSQL, specify `nulls not distinct`:
+
+```typescript
+await db.schema
+  .createTable('person')
+  .addColumn('email', 'varchar(255)')
+  .addUniqueConstraint(
+    'person_email_unique',
+    ['email'],
+    (cb) => cb.nullsNotDistinct()
+  )
+  .execute()
+```
+
+### Check Constraints
+
+```typescript
+import { sql } from 'kysely'
+
+await db.schema
+  .createTable('product')
+  .addColumn('price', 'numeric(8, 2)')
+  .addColumn('discount_price', 'numeric(8, 2)')
+  .addCheckConstraint(
+    'price_check',
+    sql`price > 0 and discount_price <= price`
+  )
+  .execute()
+```
+
+## Generated Columns
+
+### Virtual Generated Columns
+
+```typescript
+import { sql } from 'kysely'
+
+await db.schema
+  .createTable('person')
+  .addColumn('first_name', 'varchar(50)')
+  .addColumn('last_name', 'varchar(50)')
+  .addColumn('full_name', 'varchar(101)', (col) =>
+    col.generatedAlwaysAs(sql`concat(first_name, ' ', last_name)`)
+  )
+  .execute()
+```
+
+### Stored Generated Columns
+
+```typescript
+await db.schema
+  .createTable('person')
+  .addColumn('first_name', 'varchar(50)')
+  .addColumn('last_name', 'varchar(50)')
+  .addColumn('full_name', 'varchar(101)', (col) =>
+    col.generatedAlwaysAs(sql`concat(first_name, ' ', last_name)`).stored()
+  )
+  .execute()
+```
+
+## Special Table Types
+
+### Temporary Tables
+
+```typescript
+await db.schema
+  .createTable('temp_results')
+  .temporary()
+  .addColumn('id', 'integer')
+  .addColumn('value', 'varchar(255)')
+  .execute()
+```
+
+On PostgreSQL, control commit behavior:
+
+```typescript
+await db.schema
+  .createTable('temp_results')
+  .temporary()
+  .onCommit('drop')
+  .addColumn('id', 'integer')
+  .execute()
+```
+
+### Conditional Creation
+
+```typescript
+await db.schema
+  .createTable('person')
+  .ifNotExists()
+  .addColumn('id', 'integer', (col) => col.primaryKey())
+  .addColumn('name', 'varchar(255)')
+  .execute()
+```
+
+### Create Table From SELECT
+
+```typescript
+await db.schema
+  .createTable('person_backup')
+  .as(db.selectFrom('person').selectAll())
+  .execute()
+```
+
+## Advanced Modifiers
+
+### Front Modifiers
+
+Add SQL after the `create` keyword:
+
+```typescript
+import { sql } from 'kysely'
+
+await db.schema
+  .createTable('person')
+  .modifyFront(sql`global temporary`)
+  .addColumn('id', 'integer', (col) => col.primaryKey())
+  .execute()
+```
+
+### End Modifiers
+
+Add SQL to the end of the statement:
+
+```typescript
+await db.schema
+  .createTable('person')
+  .addColumn('id', 'integer', (col) => col.primaryKey())
+  .addColumn('name', 'varchar(255)')
+  .modifyEnd(sql`engine=InnoDB default charset=utf8mb4`)
+  .execute()
+```
+
+## Reusable Patterns
+
+Create reusable column definitions:
+
+```typescript
+import { type CreateTableBuilder, sql } from 'kysely'
+
+const withTimestamps = (builder: CreateTableBuilder<any, any>) => {
+  return builder
+    .addColumn('created_at', 'timestamp', (col) =>
+      col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`)
+    )
+    .addColumn('updated_at', 'timestamp', (col) =>
+      col.notNull().defaultTo(sql`CURRENT_TIMESTAMP`)
+    )
+}
+
+await db.schema
+  .createTable('person')
+  .addColumn('id', 'integer', (col) => col.primaryKey())
+  .addColumn('name', 'varchar(255)', (col) => col.notNull())
+  .$call(withTimestamps)
+  .execute()
+```

@@ -1,0 +1,564 @@
+---
+title: Creating Custom Plugins
+description: Guide to creating custom Kysely plugins for query transformation and result processing
+---
+
+## Overview
+
+Custom plugins allow you to extend Kysely's functionality by intercepting queries before execution and transforming results after execution. This guide covers everything you need to know to create powerful, reusable plugins.
+
+## Basic Plugin Structure
+
+Every plugin must implement the `KyselyPlugin` interface:
+
+```typescript
+import type {
+  KyselyPlugin,
+  PluginTransformQueryArgs,
+  PluginTransformResultArgs,
+  QueryResult,
+  RootOperationNode,
+  UnknownRow
+} from 'kysely'
+
+class MyPlugin implements KyselyPlugin {
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
+    // Transform the query before execution
+    return args.node
+  }
+
+  async transformResult(
+    args: PluginTransformResultArgs
+  ): Promise<QueryResult<UnknownRow>> {
+    // Transform the result after execution
+    return args.result
+  }
+}
+```
+
+## Simple No-Op Plugin
+
+The simplest plugin does nothing - it just returns the query and result unchanged:
+
+```typescript
+import type { KyselyPlugin } from 'kysely'
+
+export class NoopPlugin implements KyselyPlugin {
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
+    return args.node
+  }
+
+  async transformResult(
+    args: PluginTransformResultArgs
+  ): Promise<QueryResult<UnknownRow>> {
+    return args.result
+  }
+}
+```
+
+**Source:** ~/workspace/source/src/plugin/noop-plugin.ts:10
+
+## Result Transformation Plugin
+
+Plugins that only transform results can leave `transformQuery` as a no-op:
+
+```typescript
+import { KyselyPlugin } from 'kysely'
+
+class UppercaseResultsPlugin implements KyselyPlugin {
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
+    return args.node  // No query transformation
+  }
+
+  async transformResult(
+    args: PluginTransformResultArgs
+  ): Promise<QueryResult<UnknownRow>> {
+    if (!args.result.rows || !Array.isArray(args.result.rows)) {
+      return args.result
+    }
+
+    return {
+      ...args.result,
+      rows: args.result.rows.map(row => 
+        Object.entries(row).reduce((acc, [key, value]) => {
+          acc[key] = typeof value === 'string' ? value.toUpperCase() : value
+          return acc
+        }, {} as UnknownRow)
+      )
+    }
+  }
+}
+```
+
+## Query Transformation with OperationNodeTransformer
+
+For complex query transformations, extend `OperationNodeTransformer`:
+
+```typescript
+import {
+  OperationNodeTransformer,
+  IdentifierNode,
+  KyselyPlugin
+} from 'kysely'
+import type { QueryId } from 'kysely'
+
+// Transformer that adds a prefix to all identifiers
+class PrefixTransformer extends OperationNodeTransformer {
+  readonly #prefix: string
+
+  constructor(prefix: string) {
+    super()
+    this.#prefix = prefix
+  }
+
+  protected override transformIdentifier(
+    node: IdentifierNode,
+    queryId: QueryId
+  ): IdentifierNode {
+    return {
+      ...node,
+      name: this.#prefix + node.name
+    }
+  }
+}
+
+// Plugin that uses the transformer
+class PrefixPlugin implements KyselyPlugin {
+  readonly #transformer: PrefixTransformer
+
+  constructor(prefix: string) {
+    this.#transformer = new PrefixTransformer(prefix)
+  }
+
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
+    return this.#transformer.transformNode(args.node, args.queryId)
+  }
+
+  async transformResult(
+    args: PluginTransformResultArgs
+  ): Promise<QueryResult<UnknownRow>> {
+    return args.result
+  }
+}
+```
+
+## Sharing Data Between transformQuery and transformResult
+
+Use a `WeakMap` to share data between the two methods:
+
+```typescript
+import { KyselyPlugin } from 'kysely'
+
+interface QueryMetadata {
+  startTime: number
+  tableNames: string[]
+}
+
+class QueryTimingPlugin implements KyselyPlugin {
+  // Use WeakMap to avoid memory leaks
+  readonly #metadata = new WeakMap<any, QueryMetadata>()
+
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
+    // Collect metadata during query transformation
+    const metadata: QueryMetadata = {
+      startTime: Date.now(),
+      tableNames: this.extractTableNames(args.node)
+    }
+    
+    this.#metadata.set(args.queryId, metadata)
+    return args.node
+  }
+
+  async transformResult(
+    args: PluginTransformResultArgs
+  ): Promise<QueryResult<UnknownRow>> {
+    // Retrieve metadata and calculate timing
+    const metadata = this.#metadata.get(args.queryId)
+    
+    if (metadata) {
+      const duration = Date.now() - metadata.startTime
+      console.log(`Query took ${duration}ms, tables: ${metadata.tableNames.join(', ')}`)
+    }
+    
+    return args.result
+  }
+
+  private extractTableNames(node: RootOperationNode): string[] {
+    // Implementation to extract table names from the query
+    return []
+  }
+}
+```
+
+<Warning>
+  Always use `WeakMap` instead of `Map` because `transformQuery` is not always matched by a call to `transformResult`, which would leave orphaned items in a regular Map and cause a memory leak.
+</Warning>
+
+## Plugin with Configuration Options
+
+Make plugins configurable with options:
+
+```typescript
+interface LoggingPluginOptions {
+  logQueries?: boolean
+  logResults?: boolean
+  logger?: (message: string) => void
+}
+
+class LoggingPlugin implements KyselyPlugin {
+  readonly #options: Required<LoggingPluginOptions>
+
+  constructor(options: LoggingPluginOptions = {}) {
+    this.#options = {
+      logQueries: options.logQueries ?? true,
+      logResults: options.logResults ?? false,
+      logger: options.logger ?? console.log
+    }
+  }
+
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
+    if (this.#options.logQueries) {
+      this.#options.logger(`Executing query: ${JSON.stringify(args.node.kind)}`)
+    }
+    return args.node
+  }
+
+  async transformResult(
+    args: PluginTransformResultArgs
+  ): Promise<QueryResult<UnknownRow>> {
+    if (this.#options.logResults) {
+      this.#options.logger(`Result: ${args.result.rows?.length ?? 0} rows`)
+    }
+    return args.result
+  }
+}
+
+// Usage
+const db = new Kysely<Database>({
+  dialect,
+  plugins: [
+    new LoggingPlugin({
+      logQueries: true,
+      logResults: true,
+      logger: (msg) => console.log(`[DB] ${msg}`)
+    })
+  ]
+})
+```
+
+## Advanced: Row-Level Transformation
+
+Transform individual rows with recursive processing:
+
+```typescript
+import { isPlainObject } from 'kysely'
+
+class DateParserPlugin implements KyselyPlugin {
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
+    return args.node
+  }
+
+  async transformResult(
+    args: PluginTransformResultArgs
+  ): Promise<QueryResult<UnknownRow>> {
+    if (!args.result.rows || !Array.isArray(args.result.rows)) {
+      return args.result
+    }
+
+    return {
+      ...args.result,
+      rows: args.result.rows.map(row => this.transformRow(row))
+    }
+  }
+
+  private transformRow(row: UnknownRow): UnknownRow {
+    return Object.entries(row).reduce((acc, [key, value]) => {
+      acc[key] = this.transformValue(value)
+      return acc
+    }, {} as UnknownRow)
+  }
+
+  private transformValue(value: unknown): unknown {
+    // Parse date strings
+    if (typeof value === 'string' && this.isDateString(value)) {
+      return new Date(value)
+    }
+    
+    // Recursively process arrays
+    if (Array.isArray(value)) {
+      return value.map(v => this.transformValue(v))
+    }
+    
+    // Recursively process plain objects
+    if (isPlainObject(value)) {
+      return this.transformRow(value as UnknownRow)
+    }
+    
+    return value
+  }
+
+  private isDateString(str: string): boolean {
+    // Simple ISO date detection
+    return /^\d{4}-\d{2}-\d{2}/.test(str) && !isNaN(Date.parse(str))
+  }
+}
+```
+
+## Advanced: Schema Transformation Plugin
+
+Example of a complex plugin that modifies query structure:
+
+```typescript
+import {
+  OperationNodeTransformer,
+  SchemableIdentifierNode,
+  IdentifierNode,
+  KyselyPlugin
+} from 'kysely'
+
+class TenantSchemaTransformer extends OperationNodeTransformer {
+  readonly #tenantId: string
+
+  constructor(tenantId: string) {
+    super()
+    this.#tenantId = tenantId
+  }
+
+  protected override transformSchemableIdentifier(
+    node: SchemableIdentifierNode,
+    queryId: QueryId
+  ): SchemableIdentifierNode {
+    const transformed = super.transformSchemableIdentifier(node, queryId)
+    
+    // Add tenant schema if not already present
+    if (!transformed.schema) {
+      return {
+        ...transformed,
+        schema: IdentifierNode.create(`tenant_${this.#tenantId}`)
+      }
+    }
+    
+    return transformed
+  }
+}
+
+class TenantPlugin implements KyselyPlugin {
+  readonly #transformer: TenantSchemaTransformer
+
+  constructor(tenantId: string) {
+    this.#transformer = new TenantSchemaTransformer(tenantId)
+  }
+
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
+    return this.#transformer.transformNode(args.node, args.queryId)
+  }
+
+  async transformResult(
+    args: PluginTransformResultArgs
+  ): Promise<QueryResult<UnknownRow>> {
+    return args.result
+  }
+}
+
+// Usage: Different database instances for different tenants
+function createTenantDb(tenantId: string) {
+  return new Kysely<Database>({
+    dialect,
+    plugins: [new TenantPlugin(tenantId)]
+  })
+}
+```
+
+## Testing Plugins
+
+```typescript
+import { describe, it, expect } from 'vitest'
+import { Kysely, DummyDriver, sql } from 'kysely'
+
+describe('MyPlugin', () => {
+  it('should transform results correctly', async () => {
+    const db = new Kysely<Database>({
+      dialect: {
+        createAdapter: () => new DummyAdapter(),
+        createDriver: () => new DummyDriver(),
+        createIntrospector: (db) => new DummyIntrospector(db),
+        createQueryCompiler: () => new DummyQueryCompiler()
+      },
+      plugins: [new MyPlugin()]
+    })
+
+    const result = await db
+      .selectFrom('users')
+      .selectAll()
+      .execute()
+
+    // Add assertions
+    expect(result).toBeDefined()
+  })
+})
+```
+
+## Best Practices
+
+### 1. Use WeakMap for State
+
+Always use `WeakMap` to store state between `transformQuery` and `transformResult`:
+
+```typescript
+// Good ✓
+readonly #metadata = new WeakMap<any, Metadata>()
+
+// Bad ✗ - can cause memory leaks
+readonly #metadata = new Map<any, Metadata>()
+```
+
+### 2. Handle Null/Undefined Results
+
+Always check if results exist before transforming:
+
+```typescript
+async transformResult(args: PluginTransformResultArgs) {
+  if (!args.result.rows || !Array.isArray(args.result.rows)) {
+    return args.result
+  }
+  
+  // Transform rows
+}
+```
+
+### 3. Preserve Immutability
+
+Create new objects instead of mutating:
+
+```typescript
+// Good ✓
+return {
+  ...args.result,
+  rows: transformedRows
+}
+
+// Bad ✗ - mutates the original result
+args.result.rows = transformedRows
+return args.result
+```
+
+### 4. Make Plugins Configurable
+
+Provide options with sensible defaults:
+
+```typescript
+interface MyPluginOptions {
+  enabled?: boolean
+  // ... other options
+}
+
+class MyPlugin implements KyselyPlugin {
+  readonly #options: Required<MyPluginOptions>
+  
+  constructor(options: MyPluginOptions = {}) {
+    this.#options = {
+      enabled: options.enabled ?? true,
+      // ... apply defaults
+    }
+  }
+}
+```
+
+### 5. Document Your Plugin
+
+Provide clear documentation and examples:
+
+```typescript
+/**
+ * A plugin that adds audit timestamps to all queries.
+ * 
+ * @example
+ * ```ts
+ * const db = new Kysely<Database>({
+ *   dialect,
+ *   plugins: [new AuditPlugin({ userId: '123' })]
+ * })
+ * ```
+ */
+export class AuditPlugin implements KyselyPlugin {
+  // ...
+}
+```
+
+## Common Use Cases
+
+### Logging Plugin
+
+```typescript
+class QueryLoggerPlugin implements KyselyPlugin {
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
+    console.log('Query:', args.node.kind)
+    return args.node
+  }
+
+  async transformResult(
+    args: PluginTransformResultArgs
+  ): Promise<QueryResult<UnknownRow>> {
+    console.log('Rows:', args.result.rows?.length ?? 0)
+    return args.result
+  }
+}
+```
+
+### Soft Delete Plugin
+
+```typescript
+class SoftDeleteTransformer extends OperationNodeTransformer {
+  // Add WHERE deleted_at IS NULL to all queries
+  // Implementation details...
+}
+
+class SoftDeletePlugin implements KyselyPlugin {
+  readonly #transformer = new SoftDeleteTransformer()
+  
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
+    return this.#transformer.transformNode(args.node, args.queryId)
+  }
+
+  async transformResult(
+    args: PluginTransformResultArgs
+  ): Promise<QueryResult<UnknownRow>> {
+    return args.result
+  }
+}
+```
+
+### Encryption Plugin
+
+```typescript
+class EncryptionPlugin implements KyselyPlugin {
+  readonly #encryptedFields = ['ssn', 'credit_card']
+  
+  transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
+    // Encrypt sensitive fields in INSERT/UPDATE
+    return args.node
+  }
+
+  async transformResult(
+    args: PluginTransformResultArgs
+  ): Promise<QueryResult<UnknownRow>> {
+    // Decrypt sensitive fields in results
+    return {
+      ...args.result,
+      rows: args.result.rows?.map(row => this.decryptRow(row))
+    }
+  }
+  
+  private decryptRow(row: UnknownRow): UnknownRow {
+    // Decryption logic
+    return row
+  }
+}
+```
+
+## See Also
+
+- [KyselyPlugin Interface](/api/plugins/overview)
+- [CamelCasePlugin Source](/api/plugins/camel-case)
+- [WithSchemaPlugin Source](/api/plugins/with-schema)
+- [OperationNodeTransformer API](/api/operation-node-transformer)
