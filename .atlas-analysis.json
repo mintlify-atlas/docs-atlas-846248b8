@@ -1,0 +1,182 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "Kysely",
+  "projectDescription": "A type-safe and autocompletion-friendly TypeScript SQL query builder",
+  "theme": "sequoia",
+  "primaryColor": "#0891B2",
+  "lightColor": "#22D3EE",
+  "darkColor": "#0E7490",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "core-concepts/database-types",
+              "core-concepts/query-building",
+              "core-concepts/type-safety",
+              "core-concepts/dialects",
+              "core-concepts/plugins"
+            ]
+          },
+          {
+            "group": "Query Operations",
+            "pages": [
+              "operations/select",
+              "operations/insert",
+              "operations/update",
+              "operations/delete",
+              "operations/joins",
+              "operations/transactions",
+              "operations/raw-sql"
+            ]
+          },
+          {
+            "group": "Schema & Migrations",
+            "pages": [
+              "schema/creating-tables",
+              "schema/altering-tables",
+              "schema/migrations",
+              "schema/introspection"
+            ]
+          },
+          {
+            "group": "Recipes & Guides",
+            "pages": [
+              "recipes/relations",
+              "recipes/dynamic-queries",
+              "recipes/reusable-helpers",
+              "recipes/data-types",
+              "recipes/conditional-selects",
+              "recipes/expressions"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core Classes",
+            "pages": [
+              "api/kysely",
+              "api/select-query-builder",
+              "api/insert-query-builder",
+              "api/update-query-builder",
+              "api/delete-query-builder"
+            ]
+          },
+          {
+            "group": "Expression Builders",
+            "pages": [
+              "api/expression-builder",
+              "api/raw-builder",
+              "api/aggregate-function-builder",
+              "api/case-builder",
+              "api/json-path-builder"
+            ]
+          },
+          {
+            "group": "Schema Builders",
+            "pages": [
+              "api/schema",
+              "api/create-table-builder",
+              "api/alter-table-builder",
+              "api/column-definition-builder"
+            ]
+          },
+          {
+            "group": "Dialects & Drivers",
+            "pages": [
+              "api/dialects/overview",
+              "api/dialects/postgresql",
+              "api/dialects/mysql",
+              "api/dialects/sqlite",
+              "api/dialects/mssql"
+            ]
+          },
+          {
+            "group": "Plugins",
+            "pages": [
+              "api/plugins/overview",
+              "api/plugins/camel-case",
+              "api/plugins/with-schema",
+              "api/plugins/parse-json-results",
+              "api/plugins/deduplicate-joins",
+              "api/plugins/custom-plugins"
+            ]
+          },
+          {
+            "group": "Migrations",
+            "pages": [
+              "api/migrator",
+              "api/migration-provider"
+            ]
+          },
+          {
+            "group": "Types & Utilities",
+            "pages": [
+              "api/types/column-type",
+              "api/types/generated",
+              "api/types/selectable",
+              "api/types/insertable",
+              "api/types/updateable"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Type-safe SQL query building with full TypeScript inference",
+    "Support for PostgreSQL, MySQL, SQLite, and MSSQL",
+    "Automatic column and table autocompletion",
+    "Complex query support (joins, CTEs, subqueries, window functions)",
+    "Schema creation and migrations",
+    "Plugin system for extensibility",
+    "Raw SQL escape hatches when needed",
+    "Works in Node.js, Deno, Bun, and browsers"
+  ],
+  "publicApiSurface": [
+    "Kysely - Main database instance class",
+    "SelectQueryBuilder - SELECT query builder",
+    "InsertQueryBuilder - INSERT query builder",
+    "UpdateQueryBuilder - UPDATE query builder",
+    "DeleteQueryBuilder - DELETE query builder",
+    "MergeQueryBuilder - MERGE query builder",
+    "ExpressionBuilder - Build SQL expressions",
+    "RawBuilder / sql - Raw SQL template tag",
+    "AggregateFunctionBuilder - Aggregate functions (sum, count, avg, etc.)",
+    "CaseBuilder - CASE expressions",
+    "JsonPathBuilder - JSON path operations",
+    "Schema - Schema creation and modification",
+    "CreateTableBuilder - CREATE TABLE builder",
+    "AlterTableBuilder - ALTER TABLE builder",
+    "ColumnDefinitionBuilder - Column definitions",
+    "Migrator - Database migrations",
+    "FileMigrationProvider - File-based migration provider",
+    "PostgresDialect - PostgreSQL dialect",
+    "MysqlDialect - MySQL dialect",
+    "SqliteDialect - SQLite dialect",
+    "MssqlDialect - MSSQL dialect",
+    "CamelCasePlugin - Convert snake_case to camelCase",
+    "WithSchemaPlugin - Set default schema",
+    "ParseJsonResultsPlugin - Parse JSON results",
+    "DeduplicateJoinsPlugin - Remove duplicate joins",
+    "Generated<T> - Auto-generated column type",
+    "ColumnType<SelectType, InsertType, UpdateType> - Column type helper",
+    "Selectable<T> - Extract selectable type",
+    "Insertable<T> - Extract insertable type",
+    "Updateable<T> - Extract updateable type"
+  ]
+}
